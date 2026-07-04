@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# corpus audio and DB are local, not committed
+corpus/*.wav
+corpus/*.mp3
+corpus/*.flac
+corpus/*.ogg
+corpus/*.m4a
+db/*
+renders/*
+
+# keep the placeholder files
+!corpus/.gitkeep
+!renders/.gitkeep
+!db/.gitkeep
+
+# model cache
+.cache/

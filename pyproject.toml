@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mouthpiece"
+version = "0.1.0"
+requires-python = ">=3.11"
+# torch must be installed separately before this package (see README).
+# For CUDA: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+# For CPU:  pip install torch torchaudio
+dependencies = [
+    "whisperx",
+    "soundfile",
+    "librosa",
+    "numpy",
+    "fastapi",
+    "uvicorn[standard]",
+    "pyrubberband",
+]
+
+[project.scripts]
+mouthpiece = "mouthpiece.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mouthpiece*"]
