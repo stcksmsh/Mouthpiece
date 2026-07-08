@@ -226,6 +226,7 @@ header{display:flex;align-items:center;justify-content:space-between;
   </div>
   <span id="timeDisplay">—:—— / —:——</span>
   <button class="btn dl-btn" onclick="doDownload()">↓ wav</button>
+  <button class="btn dl-btn" onclick="doReaperExport()" id="reaperBtn">↓ reaper</button>
 </div>
 
 <audio id="player" style="display:none"></audio>
@@ -749,6 +750,10 @@ function doPreview(id) {
 }
 function doDownload() {
   if (S.render) window.location.href = `/api/render/${S.render.id}/download`;
+}
+
+function doReaperExport() {
+  if (S.render) window.location.href = `/api/render/${S.render.id}/reaper`;
 }
 
 /* ── Render state ───────────────────────────────────────── */

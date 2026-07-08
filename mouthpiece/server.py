@@ -309,6 +309,119 @@ def api_adjust_batch(render_id: str, req: BatchAdjustRequest):
     return _render_response(render)
 
 
+@app.get("/api/render/{render_id}/reaper")
+def api_reaper(render_id: str):
+    render = _get(render_id)
+    wav    = Path(render["wav_path"])
+    if not wav.exists():
+        raise HTTPException(404, "WAV file missing — re-render first")
+    script = _make_reaper_script(render, wav)
+    safe   = render["text"][:40].replace(" ", "_").replace("/", "").replace("\\", "")
+    return Response(
+        content=script,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="mouthpiece_{safe}.lua"'},
+    )
+
+
+def _make_reaper_script(render: dict, wav: Path) -> str:
+    words  = render["words"]
+    times  = assemble.compute_output_times(words)
+    text   = render["text"]
+    rid    = render["id"]
+
+    # collect unique speakers → stable colour index
+    speakers = list(dict.fromkeys(
+        w.get("speaker") or "unknown"
+        for w in words if w.get("found")
+    ))
+
+    # Reaper native colour: 0x01RRGGBB — a small muted palette
+    _PALETTE = [
+        0x014e9cde, 0x01de9c4e, 0x014ede9c, 0x019c4ede,
+        0x01de4e9c, 0x019cde4e, 0x014e4ede, 0x01de4e4e,
+    ]
+    def _color(speaker: str) -> int:
+        idx = speakers.index(speaker) if speaker in speakers else 0
+        return _PALETTE[idx % len(_PALETTE)]
+
+    # build Lua word table
+    rows = []
+    for w, t in zip(words, times):
+        token   = w["token"].replace('"', '\\"')
+        found   = "true" if w.get("found") else "false"
+        speaker = (w.get("speaker") or "unknown").replace('"', '\\"')
+        color   = _color(speaker) if w.get("found") else 0
+        rows.append(
+            f'  {{start={t["start"]}, stop={t["end"]}, '
+            f'token="{token}", speaker="{speaker}", found={found}, color={color}}}'
+        )
+    word_table = "{\n" + ",\n".join(rows) + "\n}"
+
+    return f"""\
+-- MOUTHPIECE — Reaper import script
+-- Text:   {text}
+-- ID:     {rid}
+--
+-- Load in Reaper: Actions → ReaScript: Load / run script…
+
+local WAV   = {str(wav)!r}
+local WORDS = {word_table}
+
+-- ── helpers ────────────────────────────────────────────────────────────────
+
+local function insert_wav_item(track, path)
+  local item = reaper.AddMediaItemToTrack(track)
+  local take = reaper.AddTakeToMediaItem(item)
+  local src  = reaper.PCM_Source_CreateFromFile(path)
+  if not src then
+    reaper.ShowMessageBox("Could not load:\\n" .. path, "MOUTHPIECE", 0)
+    return nil
+  end
+  local len = reaper.GetMediaSourceLength(src)
+  reaper.SetMediaItemTake_Source(take, src)
+  reaper.SetMediaItemLength(item, len, false)
+  reaper.SetMediaItemPosition(item, 0, false)
+  reaper.SetMediaItemTakeInfo_Value(take, "D_VOL", 1.0)
+  return item
+end
+
+-- ── main ───────────────────────────────────────────────────────────────────
+
+reaper.Undo_BeginBlock()
+reaper.PreventUIRefresh(1)
+
+local tidx  = reaper.CountTracks(0)
+reaper.InsertTrackAtIndex(tidx, true)
+local track = reaper.GetTrack(0, tidx)
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "MOUTHPIECE", true)
+
+insert_wav_item(track, WAV)
+
+-- word regions (shown in the timeline ruler)
+for _, w in ipairs(WORDS) do
+  local label
+  if w.found then
+    label = w.token .. "  [" .. w.speaker .. "]"
+  else
+    label = "— " .. w.token
+  end
+  reaper.AddProjectMarker2(0, true, w.start, w.stop, label, -1, w.color)
+end
+
+reaper.PreventUIRefresh(-1)
+reaper.Undo_EndBlock("MOUTHPIECE: import " .. #WORDS .. " words", -1)
+reaper.UpdateArrange()
+
+reaper.ShowMessageBox(
+  "Imported " .. #WORDS .. " words onto track " .. (tidx + 1) .. ".\\n\\n" ..
+  "Word regions added to ruler.\\n" ..
+  "WAV: " .. WAV,
+  "MOUTHPIECE", 0
+)
+"""
+
+
 @app.get("/api/candidates/{word}")
 def api_candidates(word: str):
     conn = _conn()

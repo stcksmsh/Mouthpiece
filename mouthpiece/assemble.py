@@ -151,6 +151,31 @@ def assemble(
     return audio, manifest_words
 
 
+def compute_output_times(words: list[dict]) -> list[dict]:
+    """
+    Estimate per-word positions (seconds) in the assembled output.
+    Mirrors the client-side computeOutputTimes() — approximation that ignores crossfade overlap.
+    Words is the render['words'] list (needs 'found', 'duration_s', 'speed').
+    Returns list of {'start': float, 'end': float} parallel to words.
+    """
+    GAP_S     = WORD_GAP    / SAMPLE_RATE
+    MISSING_S = MISSING_GAP / SAMPLE_RATE
+    t = 0.0
+    times: list[dict] = []
+    for w in words:
+        if not w.get("found"):
+            times.append({"start": round(t, 4), "end": round(t + MISSING_S, 4)})
+            t += MISSING_S + GAP_S
+        else:
+            dur   = w.get("duration_s", 0.0)
+            pad   = min(CLIP_PAD, max(dur * 0.25, 0.010))
+            speed = max(w.get("speed", 1.0), 0.1)
+            effective = (dur + 2 * pad) / speed
+            times.append({"start": round(t, 4), "end": round(t + effective, 4)})
+            t += effective + GAP_S
+    return times
+
+
 def write_wav(audio: np.ndarray, output_path: Path) -> None:
     import librosa
     output_path.parent.mkdir(parents=True, exist_ok=True)
