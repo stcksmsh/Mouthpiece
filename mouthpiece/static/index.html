@@ -139,7 +139,12 @@ header{display:flex;align-items:center;justify-content:space-between;
 .cand-speaker{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cand-date{width:60px;flex-shrink:0}
 .cand-dur{width:40px;text-align:right;flex-shrink:0}
+.cand-f0{width:52px;text-align:right;flex-shrink:0;color:var(--muted)}
 .cand-acts{display:flex;gap:4px;flex-shrink:0;margin-left:8px}
+.cand-sort{background:none;border:1px solid var(--border2);color:var(--muted);
+  font-size:8px;letter-spacing:.1em;padding:2px 6px;cursor:pointer;border-radius:2px}
+.cand-sort:hover{color:var(--accent);border-color:var(--accent)}
+.cand-sort.on{color:var(--accent);border-color:var(--accent)}
 .cand-btn{background:transparent;border:1px solid var(--border2);color:var(--muted);
   font-family:inherit;font-size:9px;padding:3px 9px;cursor:pointer;
   letter-spacing:.06em;text-transform:uppercase;
@@ -203,9 +208,9 @@ header{display:flex;align-items:center;justify-content:space-between;
   <div id="laneHeader">
     <span class="lane-label">Automation</span>
     <button class="lane-btn" onclick="normalizeSpeed()"
-            title="Normalize speaking rate by chars/sec across clips">normalize speed</button>
+            title="Normalize speaking rate by phoneme count across clips">normalize speed</button>
     <button class="lane-btn" onclick="resetAllAdj()">reset all</button>
-    <span class="lane-hint">drag dots · click to seek</span>
+    <span class="lane-hint">drag dots · click to seek · ←→ select · ↑↓ speed · ⇧↑↓ pitch · L lock · R reroll · N normalize · ⌃Z undo</span>
   </div>
   <svg id="lane" height="132"></svg>
 </div>
@@ -213,6 +218,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <div id="candPanel">
   <div id="candHeader">
     <div id="candTitle">candidates</div>
+    <button class="cand-sort" id="pitchSortBtn" onclick="togglePitchSort()">match pitch</button>
     <button class="cand-close" onclick="closeCands()">×</button>
   </div>
   <div id="candList"></div>
@@ -245,7 +251,48 @@ const S = {
 const pendingAdj = {};
 let drag = null;
 let dragMoved = false;
-let wasLastDrag = false;  // survives into the click event that fires after mouseup
+let wasLastDrag = false;
+
+// ── Undo / redo ───────────────────────────────────────────
+const undoStack = [];
+const redoStack = [];
+const MAX_UNDO  = 40;
+let _undoSnap   = null;   // captured at start of each action, pushed on flush
+let kbFlushTimer = null;
+
+function _snapAdj() {
+  const s = {};
+  (S.render?.words || []).forEach(w => { s[w.index] = {speed: w.speed ?? 1, pitch: w.pitch ?? 0}; });
+  return s;
+}
+
+// Call at the START of any action that will eventually flush (before mutating words).
+function markDirty() {
+  if (!_undoSnap && S.render) _undoSnap = _snapAdj();
+}
+
+async function _applySnap(snap) {
+  if (!S.render) return;
+  const adjustments = Object.entries(snap).map(([i, v]) => ({word_index: +i, ...v}));
+  setStatus('applying…');
+  try {
+    const render = await api('POST', `/api/render/${S.render.id}/adjust_batch`, {adjustments});
+    applyRender(render, S.sel);
+    setStatus('done');
+  } catch(e) { setStatus('error: ' + e.message); }
+}
+
+async function doUndo() {
+  if (!undoStack.length || !S.render) return;
+  redoStack.push(_snapAdj());
+  await _applySnap(undoStack.pop());
+}
+
+async function doRedo() {
+  if (!redoStack.length || !S.render) return;
+  undoStack.push(_snapAdj());
+  await _applySnap(redoStack.pop());
+}
 
 /* ── DOM ────────────────────────────────────────────────── */
 const player  = document.getElementById('player');
@@ -545,6 +592,7 @@ new ResizeObserver(buildLane).observe(lane);
 lane.addEventListener('mousedown', e => {
   const el = e.target.closest('[data-track]');
   if (!el || !S.render) return;
+  markDirty();  // capture pre-drag state for undo
   drag = {track: el.dataset.track, word: +el.dataset.word};
   dragMoved = false;
   if (S.sel !== drag.word) {
@@ -627,8 +675,79 @@ window.addEventListener('touchend', async () => {
   if (wasLastDrag) await flushAdj();
 });
 
+// ── Keyboard shortcuts ────────────────────────────────────
+document.addEventListener('keydown', e => {
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+  // Undo / redo
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+    e.preventDefault(); doUndo(); return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+    e.preventDefault(); doRedo(); return;
+  }
+
+  // Play / pause
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
+
+  // Navigate words
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.shiftKey && !e.ctrlKey) {
+    e.preventDefault();
+    if (!S.render?.words?.length) return;
+    const n = S.render.words.length;
+    const next = S.sel === null
+      ? (e.key === 'ArrowLeft' ? n - 1 : 0)
+      : Math.max(0, Math.min(n - 1, S.sel + (e.key === 'ArrowRight' ? 1 : -1)));
+    if (S.sel !== null) tileDesel(S.sel);
+    S.sel = next;
+    tileSel(next);
+    document.getElementById(`tile${next}`)?.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    return;
+  }
+
+  // Adjust speed (↑↓) or pitch (Shift+↑↓) for selected word
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && S.sel !== null && S.render) {
+    e.preventDefault();
+    const w = S.render.words[S.sel];
+    if (!w) return;
+    markDirty();
+    const delta = e.key === 'ArrowUp' ? 1 : -1;
+    if (e.shiftKey) {
+      w.pitch = +clamp((w.pitch ?? 0) + delta, PITCH_MIN, PITCH_MAX).toFixed(2);
+    } else {
+      w.speed = +clamp((w.speed ?? 1) + delta * 0.1, SPEED_MIN, SPEED_MAX).toFixed(3);
+    }
+    pendingAdj[S.sel] = {speed: w.speed ?? 1, pitch: w.pitch ?? 0};
+    S.outputTimes = computeOutputTimes(S.render.words);
+    buildLane();
+    clearTimeout(kbFlushTimer);
+    kbFlushTimer = setTimeout(() => { kbFlushTimer = null; flushAdj(); }, 600);
+    return;
+  }
+
+  // Word actions
+  if (!S.render) return;
+  const noop = {stopPropagation: () => {}};
+  switch (e.key.toLowerCase()) {
+    case 'l': if (S.sel !== null) doLock(S.sel, noop);        break;
+    case 'r': if (S.sel !== null) doReroll(S.sel, noop);      break;
+    case 'n': normalizeSpeed();                                break;
+    case 'escape':
+      if (S.sel !== null) { tileDesel(S.sel); S.sel = null; closeCands(); buildLane(); }
+      break;
+  }
+});
+
 async function flushAdj() {
   if (!S.render || !Object.keys(pendingAdj).length) return;
+  // Commit undo snapshot captured at the start of this action
+  if (_undoSnap) {
+    undoStack.push(_undoSnap);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+    _undoSnap = null;
+  }
   const adjustments = Object.entries(pendingAdj).map(([i, v]) => ({
     word_index: +i, speed: v.speed, pitch: v.pitch,
   }));
@@ -646,12 +765,15 @@ function normalizeSpeed() {
   if (!S.render) return;
   const found = S.render.words.filter(w => w.found && (w.duration_s || 0) > 0);
   if (!found.length) return;
-  const rates  = found.map(w => w.token.length / w.duration_s);
+  markDirty();
+  // Use phoneme_count (from server) as speaking-rate proxy; fall back to char count
+  const rates  = found.map(w => (w.phoneme_count || w.token.length) / w.duration_s);
   const sorted = [...rates].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
   S.render.words.forEach(w => {
     if (!w.found || !w.duration_s) return;
-    w.speed = +clamp(w.token.length / w.duration_s / median, 0.5, 2.0).toFixed(3);
+    const rate = (w.phoneme_count || w.token.length) / w.duration_s;
+    w.speed = +clamp(rate / median, 0.5, 2.0).toFixed(3);
     pendingAdj[w.index] = {speed: w.speed, pitch: w.pitch ?? 0};
   });
   S.outputTimes = computeOutputTimes(S.render.words);
@@ -661,6 +783,7 @@ function normalizeSpeed() {
 
 function resetAllAdj() {
   if (!S.render) return;
+  markDirty();
   S.render.words.forEach(w => {
     w.speed = 1.0; w.pitch = 0.0;
     pendingAdj[w.index] = {speed: 1.0, pitch: 0.0};
@@ -845,16 +968,44 @@ function tileDesel(i) {
 }
 
 /* ── Candidates ─────────────────────────────────────────── */
-function buildCandList(w, i, cands) {
+// Candidates state: holds base list and sort mode while panel is open
+let _cands = [], _candsWordIdx = -1, _pitchSort = false;
+
+function _contextF0(wordIdx) {
+  const words = S.render?.words || [];
+  const nbrs = [words[wordIdx - 1], words[wordIdx + 1]].filter(w => w?.f0_hz);
+  return nbrs.length ? nbrs.reduce((s, w) => s + w.f0_hz, 0) / nbrs.length : null;
+}
+
+function togglePitchSort() {
+  _pitchSort = !_pitchSort;
+  document.getElementById('pitchSortBtn').classList.toggle('on', _pitchSort);
+  _renderCandList();
+}
+
+function _renderCandList() {
+  const w   = S.render?.words[_candsWordIdx];
   const list = document.getElementById('candList');
   list.innerHTML = '';
-  if (!cands.length) {
+  if (!_cands.length) {
     list.innerHTML = '<div class="cand-row" style="color:var(--muted)">no candidates found</div>';
     return;
   }
-  cands.forEach(c => {
-    const cur  = c.id === w.word_instance_id;
+  let sorted = [..._cands];
+  if (_pitchSort) {
+    const target = _contextF0(_candsWordIdx);
+    if (target) {
+      sorted.sort((a, b) => {
+        const da = a.f0_hz != null ? Math.abs(a.f0_hz - target) : 9999;
+        const db = b.f0_hz != null ? Math.abs(b.f0_hz - target) : 9999;
+        return da - db;
+      });
+    }
+  }
+  sorted.forEach(c => {
+    const cur  = c.id === w?.word_instance_id;
     const conf = c.confidence != null ? Math.round(c.confidence * 100) + '%' : '—';
+    const f0   = c.f0_hz != null ? Math.round(c.f0_hz) + 'Hz' : '—';
     const row  = document.createElement('div');
     row.className = 'cand-row' + (cur ? ' cur' : '');
     row.innerHTML = `
@@ -862,14 +1013,23 @@ function buildCandList(w, i, cands) {
       <span class="cand-speaker">${esc(c.speaker||'—')}</span>
       <span class="cand-date">${esc(c.date||'—')}</span>
       <span class="cand-dur">${c.duration_s}s</span>
+      <span class="cand-f0">${f0}</span>
       <div class="cand-acts">
         <button class="cand-btn" onclick="doPreview(${c.id})">▶</button>
         ${cur
           ? '<button class="cand-btn" disabled>current</button>'
-          : `<button class="cand-btn use" onclick="doSwap(${i},${c.id})">use</button>`}
+          : `<button class="cand-btn use" onclick="doSwap(${_candsWordIdx},${c.id})">use</button>`}
       </div>`;
     list.appendChild(row);
   });
+}
+
+function buildCandList(w, i, cands) {
+  _cands = cands;
+  _candsWordIdx = i;
+  _pitchSort = false;
+  document.getElementById('pitchSortBtn').classList.remove('on');
+  _renderCandList();
 }
 
 function closeCands() {

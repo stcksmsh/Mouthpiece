@@ -89,8 +89,8 @@ def insert_source(
 def insert_word_instances(conn: sqlite3.Connection, source_id: int, words: list[dict]) -> None:
     conn.executemany(
         """INSERT INTO word_instances
-               (source_id, word, start_s, end_s, confidence, diarization_speaker)
-           VALUES (?,?,?,?,?,?)""",
+               (source_id, word, start_s, end_s, confidence, diarization_speaker, f0_mean, rms)
+           VALUES (?,?,?,?,?,?,?,?)""",
         [
             (
                 source_id,
@@ -99,6 +99,8 @@ def insert_word_instances(conn: sqlite3.Connection, source_id: int, words: list[
                 w["end"],
                 w.get("confidence"),
                 w.get("speaker"),
+                w.get("f0_mean"),
+                w.get("rms"),
             )
             for w in words
         ],
@@ -116,7 +118,7 @@ def search_word(conn: sqlite3.Connection, word: str, limit: int = 20) -> list[di
     rows = conn.execute(
         """SELECT wi.id, wi.source_id, wi.word, wi.start_s, wi.end_s,
                   COALESCE(wi.confidence, 0) AS confidence,
-                  wi.diarization_speaker,
+                  wi.diarization_speaker, wi.f0_mean, wi.rms,
                   s.filename, s.speaker, s.date, s.source_url
            FROM word_instances wi
            JOIN sources s ON wi.source_id = s.id
@@ -132,7 +134,7 @@ def get_word_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None
     row = conn.execute(
         """SELECT wi.id, wi.source_id, wi.word, wi.start_s, wi.end_s,
                   COALESCE(wi.confidence, 0) AS confidence,
-                  wi.diarization_speaker,
+                  wi.diarization_speaker, wi.f0_mean, wi.rms,
                   s.filename, s.speaker, s.date, s.source_url
            FROM word_instances wi
            JOIN sources s ON wi.source_id = s.id

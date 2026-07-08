@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import assemble, index, match
+from . import assemble, index, match, phonemes
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -63,9 +63,10 @@ def _row_to_word(
     speed: float = 1.0,
     pitch: float = 0.0,
 ) -> dict:
+    ph = phonemes.phoneme_count(token)
     if row is None:
         return {"index": i, "token": token, "found": False, "locked": locked,
-                "speed": speed, "pitch": pitch}
+                "speed": speed, "pitch": pitch, "phoneme_count": ph}
     return {
         "index":            i,
         "token":            token,
@@ -73,6 +74,7 @@ def _row_to_word(
         "locked":           locked,
         "speed":            speed,
         "pitch":            pitch,
+        "phoneme_count":    ph,
         "word_instance_id": row["id"],
         "word":             row["word"],
         "source_file":      row["filename"],
@@ -83,6 +85,7 @@ def _row_to_word(
         "end_s":            round(row["end_s"], 4),
         "confidence":       row["confidence"],
         "duration_s":       round(row["end_s"] - row["start_s"], 3),
+        "f0_hz":            round(row["f0_mean"], 1) if row.get("f0_mean") else None,
     }
 
 
@@ -436,6 +439,8 @@ def api_candidates(word: str):
             "source_file": r["filename"],
             "confidence":  r["confidence"],
             "duration_s":  round(r["end_s"] - r["start_s"], 3),
+            "f0_hz":       round(r["f0_mean"], 1) if r.get("f0_mean") else None,
+            "rms":         round(r["rms"], 4) if r.get("rms") else None,
         }
         for r in rows
     ]

@@ -3,7 +3,48 @@
 import json
 from pathlib import Path
 
+import numpy as np
+
 SAMPLE_RATE = 16_000
+
+
+def _compute_prosodics(audio_path: Path, words: list[dict]) -> list[dict]:
+    """Enrich word dicts with f0_mean (Hz) and rms computed from the corpus WAV."""
+    try:
+        import soundfile as sf
+        import librosa
+        audio, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
+    except Exception as exc:
+        print(f"  Warning: could not load audio for prosodic analysis: {exc}")
+        return [{**w, "f0_mean": None, "rms": None} for w in words]
+
+    enriched = []
+    for w in words:
+        s = int(w["start"] * SAMPLE_RATE)
+        e = int(w["end"]   * SAMPLE_RATE)
+        clip = audio[max(0, s) : min(len(audio), e)]
+
+        if len(clip) < 256:
+            enriched.append({**w, "f0_mean": None, "rms": None})
+            continue
+
+        rms = float(np.sqrt(np.mean(clip ** 2)))
+
+        try:
+            # frame_length must be < clip length; use a power-of-2 ≤ clip//4
+            fl = 1
+            while fl * 2 <= len(clip) // 4:
+                fl *= 2
+            fl = max(fl, 128)
+            f0 = librosa.yin(clip, fmin=65, fmax=500, sr=SAMPLE_RATE, frame_length=fl)
+            voiced = f0[(f0 > 65) & (f0 < 490)]
+            f0_mean = float(np.median(voiced)) if len(voiced) else None
+        except Exception:
+            f0_mean = None
+
+        enriched.append({**w, "f0_mean": f0_mean, "rms": rms})
+
+    return enriched
 
 
 def _normalize_audio(src: Path, dst: Path) -> None:
@@ -69,6 +110,8 @@ def _ingest(
         print(f"  Cleared {existing} existing word instances.")
 
     words = transcribe.transcribe_audio(dest, model_size=model_size)
+    print(f"  Computing prosodics ({len(words)} clips) ...")
+    words = _compute_prosodics(dest, words)
     print(f"  Inserting {len(words)} word instances ...")
     index.insert_word_instances(conn, source_id, words)
 
