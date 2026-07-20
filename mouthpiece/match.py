@@ -91,6 +91,28 @@ def find_clip(
     return _pick(rows, rng, nth)
 
 
+def find_clip_near_pitch(
+    conn,
+    word: str,
+    target_f0_hz: float,
+    exclude_id: int | None = None,
+) -> dict | None:
+    """Return the clip for `word` whose f0_mean is closest to target_f0_hz."""
+    from . import index
+    rows = index.search_word_by_pitch(conn, word, target_f0_hz, limit=TOP_K + 5)
+    if exclude_id is not None:
+        rows = [r for r in rows if r["id"] != exclude_id] or rows
+    if rows:
+        return rows[0]
+    for variant in _suffix_variants(word):
+        rows = index.search_word_by_pitch(conn, variant, target_f0_hz, limit=TOP_K + 5)
+        if exclude_id is not None:
+            rows = [r for r in rows if r["id"] != exclude_id] or rows
+        if rows:
+            return rows[0]
+    return None
+
+
 def match_text(
     text: str,
     conn,

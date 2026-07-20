@@ -118,6 +118,18 @@ header{display:flex;align-items:center;justify-content:space-between;
 .lane-hint{font-size:8px;color:#2e2e2e;margin-left:auto;letter-spacing:.04em}
 #lane{width:100%;display:block;cursor:crosshair}
 
+/* prosodic panel */
+#prosodicPanel{display:none;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:8px 12px 8px 28px;border-bottom:1px solid var(--border);background:var(--bg)}
+#prosodicPanel.open{display:flex}
+.pros-field{display:flex;align-items:center;gap:6px}
+.pros-field label{font-size:8px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+.pros-field input[type=range]{width:100px;accent-color:var(--accent)}
+.pros-field input[type=number]{width:52px;background:var(--surface);border:1px solid var(--border2);
+  color:var(--text);font-family:inherit;font-size:10px;padding:2px 4px}
+.pros-field span.val{font-size:9px;color:var(--text);width:34px;flex-shrink:0}
+.pros-field label.chk{display:flex;align-items:center;gap:4px;cursor:pointer}
+
 /* candidates panel */
 #candPanel{display:none;border-top:1px solid var(--border);
   flex-direction:column;max-height:196px;flex-shrink:0}
@@ -210,7 +222,30 @@ header{display:flex;align-items:center;justify-content:space-between;
     <button class="lane-btn" onclick="normalizeSpeed()"
             title="Normalize speaking rate by phoneme count across clips">normalize speed</button>
     <button class="lane-btn" onclick="resetAllAdj()">reset all</button>
+    <button class="lane-btn" id="prosodicToggleBtn" onclick="toggleProsodicPanel()">pitch match</button>
     <span class="lane-hint">drag dots · click to seek · ←→ select · ↑↓ speed · ⇧↑↓ pitch · L lock · R reroll · N normalize · ⌃Z undo</span>
+  </div>
+  <div id="prosodicPanel">
+    <div class="pros-field">
+      <label for="prosF0">center pitch</label>
+      <input type="range" id="prosF0" min="60" max="400" step="1" value="150"
+             oninput="document.getElementById('prosF0val').textContent = this.value + 'hz'">
+      <span class="val" id="prosF0val">150hz</span>
+    </div>
+    <div class="pros-field">
+      <label for="prosRange">intonation</label>
+      <input type="range" id="prosRange" min="0" max="12" step="0.5" value="6"
+             oninput="document.getElementById('prosRangeVal').textContent = this.value + 'st'">
+      <span class="val" id="prosRangeVal">6st</span>
+    </div>
+    <div class="pros-field">
+      <label for="prosRate">speaking rate</label>
+      <input type="range" id="prosRate" min="0.5" max="2" step="0.05" value="1"
+             oninput="document.getElementById('prosRateVal').textContent = this.value + 'x'">
+      <span class="val" id="prosRateVal">1x</span>
+    </div>
+    <label class="chk"><input type="checkbox" id="prosApplySpeed"> apply rate</label>
+    <button class="lane-btn" onclick="doAutoPitch()">apply pitch match</button>
   </div>
   <svg id="lane" height="132"></svg>
 </div>
@@ -793,6 +828,35 @@ function resetAllAdj() {
   flushAdj();
 }
 
+function toggleProsodicPanel() {
+  const on = document.getElementById('prosodicPanel').classList.toggle('open');
+  document.getElementById('prosodicToggleBtn').classList.toggle('on', on);
+}
+
+async function doAutoPitch() {
+  if (!S.render) return;
+  markDirty();
+  const body = {
+    mean_f0_hz:     parseFloat(document.getElementById('prosF0').value),
+    pitch_range_st: parseFloat(document.getElementById('prosRange').value),
+    speaking_rate:  parseFloat(document.getElementById('prosRate').value),
+    apply_pitch:    true,
+    apply_speed:    document.getElementById('prosApplySpeed').checked,
+  };
+  setStatus('matching pitch…');
+  try {
+    if (_undoSnap) {
+      undoStack.push(_undoSnap);
+      if (undoStack.length > MAX_UNDO) undoStack.shift();
+      redoStack.length = 0;
+      _undoSnap = null;
+    }
+    const render = await api('POST', `/api/render/${S.render.id}/auto_pitch`, body);
+    applyRender(render, S.sel);
+    setStatus('done');
+  } catch(e) { setStatus('error: ' + e.message); }
+}
+
 /* ── Actions ────────────────────────────────────────────── */
 async function doRender() {
   const text = document.getElementById('textInput').value.trim();
@@ -972,6 +1036,10 @@ function tileDesel(i) {
 let _cands = [], _candsWordIdx = -1, _pitchSort = false;
 
 function _contextF0(wordIdx) {
+  const panel = document.getElementById('prosodicPanel');
+  if (panel && panel.classList.contains('open')) {
+    return parseFloat(document.getElementById('prosF0').value);
+  }
   const words = S.render?.words || [];
   const nbrs = [words[wordIdx - 1], words[wordIdx + 1]].filter(w => w?.f0_hz);
   return nbrs.length ? nbrs.reduce((s, w) => s + w.f0_hz, 0) / nbrs.length : null;

@@ -18,6 +18,7 @@ dependencies = [
     "uvicorn[standard]",
     "pyrubberband",
     "cmudict",
+    "nltk",
 ]
 
 [project.scripts]

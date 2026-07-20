@@ -7,28 +7,78 @@ import numpy as np
 
 SAMPLE_RATE = 16_000
 
+_lemmatizer = None
+
+
+def _lemmatize(word: str) -> str | None:
+    """WordNet lemma for a word (verb-form first, falls back to noun-form)."""
+    global _lemmatizer
+    try:
+        if _lemmatizer is None:
+            from nltk.stem import WordNetLemmatizer
+            _lemmatizer = WordNetLemmatizer()
+        w = word.lower().strip()
+        if not w.isalpha():
+            return None
+        try:
+            lemma = _lemmatizer.lemmatize(w, pos="v")
+        except LookupError:
+            import nltk
+            nltk.download("wordnet", quiet=True)
+            lemma = _lemmatizer.lemmatize(w, pos="v")
+        if lemma == w:
+            lemma = _lemmatizer.lemmatize(w, pos="n")
+        return lemma
+    except Exception:
+        return None
+
+
+def _spectral_tilt(clip: np.ndarray, sr: int) -> float | None:
+    """Log ratio of sub-1kHz energy to 1-4kHz energy — rough voice-quality proxy."""
+    try:
+        spec = np.abs(np.fft.rfft(clip))
+        freqs = np.fft.rfftfreq(len(clip), d=1.0 / sr)
+        low = spec[(freqs > 0) & (freqs < 1000)]
+        high = spec[(freqs >= 1000) & (freqs < 4000)]
+        low_e = float(np.sum(low ** 2))
+        high_e = float(np.sum(high ** 2))
+        if low_e <= 0 or high_e <= 0:
+            return None
+        return float(np.log(low_e / high_e))
+    except Exception:
+        return None
+
 
 def _compute_prosodics(audio_path: Path, words: list[dict]) -> list[dict]:
-    """Enrich word dicts with f0_mean (Hz) and rms computed from the corpus WAV."""
+    """Enrich word dicts with f0_mean/f0_var (Hz), rms, spectral_tilt, and lemma."""
     try:
         import soundfile as sf
         import librosa
         audio, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
     except Exception as exc:
         print(f"  Warning: could not load audio for prosodic analysis: {exc}")
-        return [{**w, "f0_mean": None, "rms": None} for w in words]
+        return [
+            {**w, "f0_mean": None, "f0_var": None, "rms": None,
+             "spectral_tilt": None, "lemma": _lemmatize(w["word"])}
+            for w in words
+        ]
 
     enriched = []
     for w in words:
         s = int(w["start"] * SAMPLE_RATE)
         e = int(w["end"]   * SAMPLE_RATE)
         clip = audio[max(0, s) : min(len(audio), e)]
+        lemma = _lemmatize(w["word"])
 
         if len(clip) < 256:
-            enriched.append({**w, "f0_mean": None, "rms": None})
+            enriched.append({
+                **w, "f0_mean": None, "f0_var": None, "rms": None,
+                "spectral_tilt": None, "lemma": lemma,
+            })
             continue
 
         rms = float(np.sqrt(np.mean(clip ** 2)))
+        tilt = _spectral_tilt(clip, SAMPLE_RATE)
 
         try:
             # frame_length must be < clip length; use a power-of-2 ≤ clip//4
@@ -39,10 +89,15 @@ def _compute_prosodics(audio_path: Path, words: list[dict]) -> list[dict]:
             f0 = librosa.yin(clip, fmin=65, fmax=500, sr=SAMPLE_RATE, frame_length=fl)
             voiced = f0[(f0 > 65) & (f0 < 490)]
             f0_mean = float(np.median(voiced)) if len(voiced) else None
+            f0_var = float(np.var(voiced)) if len(voiced) else None
         except Exception:
             f0_mean = None
+            f0_var = None
 
-        enriched.append({**w, "f0_mean": f0_mean, "rms": rms})
+        enriched.append({
+            **w, "f0_mean": f0_mean, "f0_var": f0_var, "rms": rms,
+            "spectral_tilt": tilt, "lemma": lemma,
+        })
 
     return enriched
 

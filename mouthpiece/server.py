@@ -86,6 +86,9 @@ def _row_to_word(
         "confidence":       row["confidence"],
         "duration_s":       round(row["end_s"] - row["start_s"], 3),
         "f0_hz":            round(row["f0_mean"], 1) if row.get("f0_mean") else None,
+        "f0_var":           round(row["f0_var"], 1) if row.get("f0_var") else None,
+        "spectral_tilt":    round(row["spectral_tilt"], 3) if row.get("spectral_tilt") is not None else None,
+        "lemma":            row.get("lemma"),
     }
 
 
@@ -166,6 +169,13 @@ class BatchAdjustItem(BaseModel):
 
 class BatchAdjustRequest(BaseModel):
     adjustments: list[BatchAdjustItem]
+
+class AutoPitchRequest(BaseModel):
+    mean_f0_hz: float          # target center pitch for the whole render, in Hz
+    pitch_range_st: float = 6.0  # how much of the render's own intonation contour to preserve, in semitones
+    speaking_rate: float = 1.0   # multiplier applied to per-word speed
+    apply_pitch: bool = True
+    apply_speed: bool = False
 
 # ---------------------------------------------------------------------------
 # API routes
@@ -312,6 +322,33 @@ def api_adjust_batch(render_id: str, req: BatchAdjustRequest):
     return _render_response(render)
 
 
+@app.post("/api/render/{render_id}/auto_pitch")
+def api_auto_pitch(render_id: str, req: AutoPitchRequest):
+    """Shift every word's pitch toward a target center Hz, preserving a scaled
+    version of the render's own natural intonation contour."""
+    render = _get(render_id)
+    words = render["words"]
+    f0s = [w["f0_hz"] for w in words if w.get("found") and w.get("f0_hz")]
+    if not f0s:
+        raise HTTPException(400, "No words with pitch data in this render")
+    corpus_median = float(np.median(f0s))
+    scale = req.pitch_range_st / 12.0
+
+    for w in words:
+        if not w.get("found"):
+            continue
+        if req.apply_speed:
+            w["speed"] = max(0.25, min(4.0, req.speaking_rate))
+        if req.apply_pitch and w.get("f0_hz"):
+            word_f0 = w["f0_hz"]
+            dev_st = 12.0 * np.log2(word_f0 / corpus_median)
+            shift_st = 12.0 * np.log2(req.mean_f0_hz / word_f0) + dev_st * scale
+            w["pitch"] = float(max(-12.0, min(12.0, shift_st)))
+
+    _assemble(render)
+    return _render_response(render)
+
+
 @app.get("/api/render/{render_id}/reaper")
 def api_reaper(render_id: str):
     render = _get(render_id)
@@ -441,6 +478,8 @@ def api_candidates(word: str):
             "duration_s":  round(r["end_s"] - r["start_s"], 3),
             "f0_hz":       round(r["f0_mean"], 1) if r.get("f0_mean") else None,
             "rms":         round(r["rms"], 4) if r.get("rms") else None,
+            "f0_var":      round(r["f0_var"], 1) if r.get("f0_var") else None,
+            "spectral_tilt": round(r["spectral_tilt"], 3) if r.get("spectral_tilt") is not None else None,
         }
         for r in rows
     ]
