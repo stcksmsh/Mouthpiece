@@ -1,0 +1,11 @@
+{
+  "slug": "mouthpiece",
+  "title": "Mouthpiece",
+  "tagline": "A concatenative speech-collage engine — text in, a WAV of real people's real words out.",
+  "status": "active",
+  "stack": ["Python", "WhisperX", "CLI"],
+  "repo": "https://github.com/stcksmsh/Mouthpiece",
+  "accent": [0.65, 0.22, 340],
+  "featured": true,
+  "order": 0
+}
