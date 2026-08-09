@@ -1,0 +1,522 @@
+[
+  {
+    "text": "mouthpiece",
+    "slug": "mouthpiece",
+    "segments": [
+      {
+        "id": "mouthpiece-0",
+        "audioFile": "clips/mouthpiece-0.opus",
+        "durationMs": 260,
+        "label": "M-AW-TH",
+        "parentWord": "mouth",
+        "speaker": "Benjamin Hathaway",
+        "sourceUrl": "https://archive.org/details/1001_questions_history_2004_librivox",
+        "natural": false
+      },
+      {
+        "id": "mouthpiece-1",
+        "audioFile": "clips/mouthpiece-1.opus",
+        "durationMs": 220,
+        "label": "P-IY-S",
+        "parentWord": "piece",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-07-16_EXP47-48_Preflight-Crew-News-Conference.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "concatenative",
+    "slug": "concatenative",
+    "segments": [
+      {
+        "id": "concatenative-0",
+        "audioFile": "clips/concatenative-0.opus",
+        "durationMs": 142,
+        "label": "K-AH-N",
+        "parentWord": "concerned",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      },
+      {
+        "id": "concatenative-1",
+        "audioFile": "clips/concatenative-1.opus",
+        "durationMs": 236,
+        "label": "K-AE-T-AH",
+        "parentWord": "category",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": true
+      },
+      {
+        "id": "concatenative-2",
+        "audioFile": "clips/concatenative-2.opus",
+        "durationMs": 222,
+        "label": "N-EY-T",
+        "parentWord": "dominate",
+        "speaker": "Winston Churchill",
+        "sourceUrl": "https://archive.org/details/Winston_Churchill",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "synthesis",
+    "slug": "synthesis",
+    "segments": [
+      {
+        "id": "synthesis-0",
+        "audioFile": "clips/synthesis-0.opus",
+        "durationMs": 98,
+        "label": "S-IH",
+        "parentWord": "city",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": true
+      },
+      {
+        "id": "synthesis-1",
+        "audioFile": "clips/synthesis-1.opus",
+        "durationMs": 232,
+        "label": "N-TH",
+        "parentWord": "in",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-14-16_COMMERCIAL-RESUPPLY-SERVICES_CRS-2_Announcement-Briefing_at_JSC.wav",
+        "natural": true
+      },
+      {
+        "id": "synthesis-2",
+        "audioFile": "clips/synthesis-2.opus",
+        "durationMs": 30,
+        "label": "AH",
+        "parentWord": "a",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      },
+      {
+        "id": "synthesis-3",
+        "audioFile": "clips/synthesis-3.opus",
+        "durationMs": 134,
+        "label": "S-AH",
+        "parentWord": "some",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": true
+      },
+      {
+        "id": "synthesis-4",
+        "audioFile": "clips/synthesis-4.opus",
+        "durationMs": 61,
+        "label": "S",
+        "parentWord": "so",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "collage",
+    "slug": "collage",
+    "segments": [
+      {
+        "id": "collage-0",
+        "audioFile": "clips/collage-0.opus",
+        "durationMs": 168,
+        "label": "K-AH-L",
+        "parentWord": "physical",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": false
+      },
+      {
+        "id": "collage-1",
+        "audioFile": "clips/collage-1.opus",
+        "durationMs": 198,
+        "label": "AA-ZH",
+        "parentWord": "garage",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-13-17_EVA_39_Coverage.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "a concatenative speech collage engine",
+    "slug": "a-concatenative-speech-collage-engine",
+    "segments": [
+      {
+        "id": "a-concatenative-speech-collage-engine-0",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-0.opus",
+        "durationMs": 50,
+        "label": "a",
+        "parentWord": "a",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-13-17_EVA_39_Coverage.wav",
+        "natural": false
+      },
+      {
+        "id": "a-concatenative-speech-collage-engine-1",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-1.opus",
+        "durationMs": 181,
+        "label": "K-AH-N",
+        "parentWord": "falcon",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-14-16_COMMERCIAL-RESUPPLY-SERVICES_CRS-2_Announcement-Briefing_at_JSC.wav",
+        "natural": false
+      },
+      {
+        "id": "a-concatenative-speech-collage-engine-2",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-2.opus",
+        "durationMs": 236,
+        "label": "K-AE-T-AH",
+        "parentWord": "category",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": true
+      },
+      {
+        "id": "a-concatenative-speech-collage-engine-3",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-3.opus",
+        "durationMs": 172,
+        "label": "N-EY-T",
+        "parentWord": "urinate",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": false
+      },
+      {
+        "id": "a-concatenative-speech-collage-engine-4",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-4.opus",
+        "durationMs": 420,
+        "label": "speech",
+        "parentWord": "speech",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": false
+      },
+      {
+        "id": "a-concatenative-speech-collage-engine-5",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-5.opus",
+        "durationMs": 168,
+        "label": "K-AH-L",
+        "parentWord": "physical",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": false
+      },
+      {
+        "id": "a-concatenative-speech-collage-engine-6",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-6.opus",
+        "durationMs": 198,
+        "label": "AA-ZH",
+        "parentWord": "garage",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-13-17_EVA_39_Coverage.wav",
+        "natural": false
+      },
+      {
+        "id": "a-concatenative-speech-collage-engine-7",
+        "audioFile": "clips/a-concatenative-speech-collage-engine-7.opus",
+        "durationMs": 380,
+        "label": "engine",
+        "parentWord": "engine",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-14-16_COMMERCIAL-RESUPPLY-SERVICES_CRS-2_Announcement-Briefing_at_JSC.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "good for the mission",
+    "slug": "good-for-the-mission",
+    "segments": [
+      {
+        "id": "good-for-the-mission-0",
+        "audioFile": "clips/good-for-the-mission-0.opus",
+        "durationMs": 240,
+        "label": "good",
+        "parentWord": "good",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-13-17_EVA_39_Coverage.wav",
+        "natural": false
+      },
+      {
+        "id": "good-for-the-mission-1",
+        "audioFile": "clips/good-for-the-mission-1.opus",
+        "durationMs": 300,
+        "label": "for the",
+        "parentWord": "for",
+        "speaker": "Mark Twain",
+        "sourceUrl": "https://archive.org/details/100000banknote_jg_librivox",
+        "natural": true
+      },
+      {
+        "id": "good-for-the-mission-2",
+        "audioFile": "clips/good-for-the-mission-2.opus",
+        "durationMs": 340,
+        "label": "mission",
+        "parentWord": "mission",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-07-16_EXP47-48_Preflight-Crew-News-Conference.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "for the crew",
+    "slug": "for-the-crew",
+    "segments": [
+      {
+        "id": "for-the-crew-0",
+        "audioFile": "clips/for-the-crew-0.opus",
+        "durationMs": 180,
+        "label": "for",
+        "parentWord": "for",
+        "speaker": "Mark Twain",
+        "sourceUrl": "https://archive.org/details/100000banknote_jg_librivox",
+        "natural": false
+      },
+      {
+        "id": "for-the-crew-1",
+        "audioFile": "clips/for-the-crew-1.opus",
+        "durationMs": 90,
+        "label": "the",
+        "parentWord": "the",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      },
+      {
+        "id": "for-the-crew-2",
+        "audioFile": "clips/for-the-crew-2.opus",
+        "durationMs": 240,
+        "label": "crew",
+        "parentWord": "crew",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "photography",
+    "slug": "photography",
+    "segments": [
+      {
+        "id": "photography-0",
+        "audioFile": "clips/photography-0.opus",
+        "durationMs": 720,
+        "label": "photography",
+        "parentWord": "photography",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "navigation",
+    "slug": "navigation",
+    "segments": [
+      {
+        "id": "navigation-0",
+        "audioFile": "clips/navigation-0.opus",
+        "durationMs": 277,
+        "label": "N-AE",
+        "parentWord": "nasa",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-10-20_ARTEMIS_Astronaut-Candidate-Graduation_at_NASA-JSC.wav",
+        "natural": false
+      },
+      {
+        "id": "navigation-1",
+        "audioFile": "clips/navigation-1.opus",
+        "durationMs": 115,
+        "label": "V-AH",
+        "parentWord": "evidence",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": false
+      },
+      {
+        "id": "navigation-2",
+        "audioFile": "clips/navigation-2.opus",
+        "durationMs": 408,
+        "label": "G-EY-SH-AH-N",
+        "parentWord": "allegation",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": true
+      }
+    ]
+  },
+  {
+    "text": "gravitational",
+    "slug": "gravitational",
+    "segments": [
+      {
+        "id": "gravitational-0",
+        "audioFile": "clips/gravitational-0.opus",
+        "durationMs": 700,
+        "label": "gravitational",
+        "parentWord": "gravitational",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-14-16_COMMERCIAL-RESUPPLY-SERVICES_CRS-2_Announcement-Briefing_at_JSC.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "astronaut",
+    "slug": "astronaut",
+    "segments": [
+      {
+        "id": "astronaut-0",
+        "audioFile": "clips/astronaut-0.opus",
+        "durationMs": 500,
+        "label": "astronaut",
+        "parentWord": "astronaut",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "engine",
+    "slug": "engine",
+    "segments": [
+      {
+        "id": "engine-0",
+        "audioFile": "clips/engine-0.opus",
+        "durationMs": 380,
+        "label": "engine",
+        "parentWord": "engine",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-14-16_COMMERCIAL-RESUPPLY-SERVICES_CRS-2_Announcement-Briefing_at_JSC.wav",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "speech",
+    "slug": "speech",
+    "segments": [
+      {
+        "id": "speech-0",
+        "audioFile": "clips/speech-0.opus",
+        "durationMs": 380,
+        "label": "speech",
+        "parentWord": "speech",
+        "speaker": "Benjamin Hathaway",
+        "sourceUrl": "https://archive.org/details/1001_questions_grammar_2009_librivox",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "real people's real words",
+    "slug": "real-people-s-real-words",
+    "segments": [
+      {
+        "id": "real-people-s-real-words-0",
+        "audioFile": "clips/real-people-s-real-words-0.opus",
+        "durationMs": 280,
+        "label": "real",
+        "parentWord": "real",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-10-17_Inflight_Event_With_Lovett_Scool.wav",
+        "natural": false
+      },
+      {
+        "id": "real-people-s-real-words-1",
+        "audioFile": "clips/real-people-s-real-words-1.opus",
+        "durationMs": 400,
+        "label": "people's",
+        "parentWord": "people's",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": false
+      },
+      {
+        "id": "real-people-s-real-words-2",
+        "audioFile": "clips/real-people-s-real-words-2.opus",
+        "durationMs": 280,
+        "label": "real",
+        "parentWord": "real",
+        "speaker": "Fujiwara no Teika (ed.), transl. William Porter",
+        "sourceUrl": "https://archive.org/details/100_verses_japan_librivox",
+        "natural": false
+      },
+      {
+        "id": "real-people-s-real-words-3",
+        "audioFile": "clips/real-people-s-real-words-3.opus",
+        "durationMs": 360,
+        "label": "words",
+        "parentWord": "words",
+        "speaker": "Benjamin Hathaway",
+        "sourceUrl": "https://archive.org/details/1001_questions_history_2004_librivox",
+        "natural": false
+      }
+    ]
+  },
+  {
+    "text": "text in a wave out",
+    "slug": "text-in-a-wave-out",
+    "segments": [
+      {
+        "id": "text-in-a-wave-out-0",
+        "audioFile": "clips/text-in-a-wave-out-0.opus",
+        "durationMs": 420,
+        "label": "text",
+        "parentWord": "text",
+        "speaker": "SCOTUS oral argument",
+        "sourceUrl": "https://archive.org/details/SCOTUSOralArugments",
+        "natural": false
+      },
+      {
+        "id": "text-in-a-wave-out-1",
+        "audioFile": "clips/text-in-a-wave-out-1.opus",
+        "durationMs": 90,
+        "label": "in",
+        "parentWord": "in",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-14-16_COMMERCIAL-RESUPPLY-SERVICES_CRS-2_Announcement-Briefing_at_JSC.wav",
+        "natural": false
+      },
+      {
+        "id": "text-in-a-wave-out-2",
+        "audioFile": "clips/text-in-a-wave-out-2.opus",
+        "durationMs": 50,
+        "label": "a",
+        "parentWord": "a",
+        "speaker": "Jane Austen",
+        "sourceUrl": "https://archive.org/details/0_sense_and_sensibility_librivox",
+        "natural": false
+      },
+      {
+        "id": "text-in-a-wave-out-3",
+        "audioFile": "clips/text-in-a-wave-out-3.opus",
+        "durationMs": 480,
+        "label": "wave",
+        "parentWord": "wave",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-10-20_ARTEMIS_Astronaut-Candidate-Graduation_at_NASA-JSC.wav",
+        "natural": false
+      },
+      {
+        "id": "text-in-a-wave-out-4",
+        "audioFile": "clips/text-in-a-wave-out-4.opus",
+        "durationMs": 182,
+        "label": "out",
+        "parentWord": "out",
+        "speaker": "john.l.stoll@nasa.gov",
+        "sourceUrl": "https://archive.org/details/01-06-17_EVA_38.wav",
+        "natural": false
+      }
+    ]
+  }
+]
