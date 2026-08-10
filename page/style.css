@@ -1,0 +1,97 @@
+/*
+ * MOUTHPIECE project page — self-contained styles, federated alongside
+ * entry.tsx/DemoScope.tsx into the host site's build. Every class here is
+ * "mp-"-prefixed to avoid colliding with the host site's own global or
+ * per-page class names (this stylesheet, once imported by entry.tsx, is a
+ * real unscoped stylesheet — nothing like Astro's per-file <style> scoping
+ * applies to it). Design tokens (--bg-glass, --radius-panel, --accent,
+ * --step-*, etc.) are the host site's own global custom properties, always
+ * available regardless of route — reused deliberately so this page matches
+ * the site's look without duplicating its palette/type scale here.
+ */
+
+.mp-hero { position: relative; padding-top: clamp(2rem, 5vw, 4rem); padding-bottom: 2rem; }
+.mp-hero-scrim {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg,
+    color-mix(in oklch, var(--bg) 97%, transparent) 0%,
+    color-mix(in oklch, var(--bg) 94%, transparent) 48%,
+    color-mix(in oklch, var(--bg) 65%, transparent) 65%,
+    transparent 86%);
+  mask-image: linear-gradient(180deg, transparent 0%, black 15%, black 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, black 15%, black 82%, transparent 100%);
+}
+.mp-hero-inner { position: relative; z-index: 2; }
+.mp-hero h1 { font-size: var(--step-3); margin: 0.5rem 0 1rem; }
+.mp-lede { max-width: var(--measure); color: var(--ink-dim); font-size: var(--step-1); }
+.mp-hero-inner .ticker-viewport { margin-top: 1.5rem; }
+.mp-stack { list-style: none; }
+.mp-stack li { font-size: var(--step--1); color: var(--ink-faint); border: var(--border); padding: 0.1rem 0.5rem; border-radius: var(--radius); white-space: nowrap; }
+.mp-project-links { display: flex; gap: 1.5rem; margin: 1.5rem 0 0.5rem; }
+.mp-project-links a { color: var(--accent); }
+
+.mp-demo-shell {
+  margin-top: 2rem; padding: 1.5rem;
+  border: var(--border); border-radius: var(--radius-panel);
+  background: var(--bg-glass);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--panel-highlight), var(--panel-shadow);
+}
+.mp-demo-kicker { display: block; margin-bottom: 1rem; }
+
+.mp-section-head { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; }
+.mp-section-head h2 { font-size: var(--step-2); }
+
+.mp-tiers { list-style: none; display: flex; flex-direction: column; gap: 1.25rem; max-width: var(--measure); margin-bottom: 2.5rem; }
+.mp-tier { display: flex; gap: 1.25rem; align-items: baseline; }
+.mp-tier-n { color: var(--accent); flex-shrink: 0; }
+.mp-tier h3 { font-size: var(--step-0); margin-bottom: 0.25rem; }
+.mp-tier p { color: var(--ink-dim); font-size: var(--step--1); }
+
+.mp-stat-line {
+  display: flex; flex-wrap: wrap; gap: 0; list-style: none;
+  border: var(--border); border-radius: var(--radius-panel); overflow: hidden;
+  background: var(--bg-glass);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--panel-highlight), var(--panel-shadow);
+}
+.mp-stat-line li {
+  flex: 1 1 auto; min-width: 8rem; padding: 0.9rem 1.2rem;
+  display: flex; flex-direction: column; gap: 0.15rem;
+  border-right: var(--border);
+}
+.mp-stat-line li:last-child { border-right: none; }
+.mp-stat-line b { font-size: var(--step-1); color: var(--accent); }
+
+/* ── DemoScope ────────────────────────────────────────────────────── */
+.mp-demo { display: flex; flex-direction: column; gap: 1rem; }
+.mp-demo-input {
+  background: var(--bg-sunken); border: var(--border); border-radius: var(--radius);
+  color: var(--ink); font-family: var(--font-mono); font-size: var(--step-0);
+  padding: 0.6rem 0.9rem;
+}
+.mp-demo-input:focus { outline: none; border-color: var(--accent); }
+.mp-demo-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.mp-chip {
+  background: none; border: var(--border); border-radius: var(--radius);
+  color: var(--ink-dim); font-family: var(--font-mono); font-size: var(--step--1);
+  padding: 0.35rem 0.75rem; cursor: pointer; transition: color 0.15s, border-color 0.15s;
+}
+.mp-chip:hover { color: var(--accent); border-color: var(--accent); }
+.mp-chip.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.mp-demo-empty { color: var(--ink-faint); }
+
+.mp-demo-scope { width: 100%; height: 90px; display: block; }
+
+.mp-demo-tiles { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.mp-tile {
+  border: var(--border); border-radius: var(--radius); background: var(--bg-sunken);
+  padding: 0.5rem 0.75rem; min-width: 6rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.mp-tile.natural { border-style: solid; border-color: var(--accent); }
+.mp-tile:not(.natural) { border-style: dashed; }
+.mp-tile.playing { box-shadow: 0 0 0 2px var(--accent-glow); }
+.mp-tile-label { font-size: var(--step-0); color: var(--ink); letter-spacing: 0.02em; }
+.mp-tile-source { margin-top: 0.15rem; }
+.mp-tile-speaker { color: var(--ink-faint); }
