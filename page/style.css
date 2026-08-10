@@ -39,6 +39,12 @@
 }
 .mp-demo-kicker { display: block; margin-bottom: 1rem; }
 
+/* .shell (the host site's max-width utility) carries no vertical spacing of
+   its own — every section needs its own. The standard template's hero
+   supplies padding-bottom before its devlog-stream section starts right
+   after; this section replaces that role for us, so it needs both edges. */
+.mp-how { padding-top: 3rem; padding-bottom: 3rem; }
+
 .mp-section-head { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; }
 .mp-section-head h2 { font-size: var(--step-2); }
 

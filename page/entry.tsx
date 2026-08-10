@@ -103,7 +103,7 @@ export default function MouthpiecePage({ project }: { project: ProjectMeta; devl
         </div>
       </header>
 
-      <section className="shell">
+      <section className="shell mp-how">
         <div className="mp-section-head">
           <span className="coord">how it works</span>
           <h2>Four ways to build a word</h2>
