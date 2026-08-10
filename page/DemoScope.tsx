@@ -23,9 +23,10 @@ interface DemoEntry {
 }
 
 interface Props {
-  /** Project slug — assets live at /generated/projects/<slug>/manifest.json
-   * + /clips/ (the site's federate.ts mirrors this page bundle's assets/
-   * there — see the sibling entry.tsx's header comment). */
+  /** Project slug — assets live at /generated/projects/<slug>/assets/
+   * manifest.json + /assets/clips/ (the site's federate.ts mirrors this
+   * page bundle's assets/ dir there, preserving its own relative path —
+   * see the sibling entry.tsx's header comment). */
   slug: string;
   accent?: [number, number, number];
 }
@@ -72,7 +73,7 @@ export default function DemoScope({ slug, accent = [0.65, 0.22, 340] }: Props) {
   const stopRef = useRef<() => void>(() => {});
 
   useEffect(() => {
-    fetch(`/generated/projects/${slug}/manifest.json`)
+    fetch(`/generated/projects/${slug}/assets/manifest.json`)
       .then((r) => (r.ok ? r.json() : []))
       .then(setEntries)
       .catch(() => setEntries([]));
@@ -134,7 +135,7 @@ export default function DemoScope({ slug, accent = [0.65, 0.22, 340] }: Props) {
     let buffers: AudioBuffer[];
     try {
       buffers = await Promise.all(
-        entry.segments.map((s) => loadBuffer(ctx, `/generated/projects/${slug}/${s.audioFile}`))
+        entry.segments.map((s) => loadBuffer(ctx, `/generated/projects/${slug}/assets/${s.audioFile}`))
       );
     } catch {
       stopRef.current();
