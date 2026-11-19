@@ -3,15 +3,155 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Mouthpiece</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Mouthpiece — real people's real words, cut and spliced</title>
+    <meta name="description" content="A concatenative speech-collage engine. Type text; receive a WAV assembled from real clips of real people actually saying each word, with full per-word provenance. Not TTS." />
+    <meta property="og:title" content="Mouthpiece — a speech-collage engine" />
+    <meta property="og:description" content="Text in, a WAV of real people's real words out. Every word is an unmodified clip, with provenance. Not TTS." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#16130f" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='2' width='14' height='12' rx='1' fill='%23f2ead8' transform='rotate(-6 8 8)'/%3E%3Ctext x='8' y='12.5' font-size='11' font-family='serif' font-weight='700' text-anchor='middle' fill='%23d12a6b'%3EM%3C/text%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Bebas+Neue&family=DM+Serif+Display:ital@0;1&family=Space+Mono:wght@400;700&family=Special+Elite&family=Inter:wght@400;600&display=swap" />
   </head>
   <body>
+    <a class="skip" href="#demo">Skip to the demo</a>
+
+    <header class="hero">
+      <p class="kicker mono">a concatenative speech-collage engine</p>
+      <h1 id="title" aria-label="Mouthpiece">MOUTHPIECE</h1>
+      <p class="lede">Type text; receive a WAV assembled from real clips of real people actually saying each word, cut from a corpus you supply, with full per-word provenance.</p>
+      <p class="stamp" aria-label="Not text-to-speech">Not TTS.</p>
+      <p class="sub">Every word in the output is an unmodified clip of someone actually saying it.</p>
+      <button type="button" id="say-name" class="say mono">▶ hear the name, cut from two recordings</button>
+      <nav class="links mono" aria-label="Project">
+        <a href="#demo">Hear it →</a>
+        <a href="#use">Run it →</a>
+        <a href="https://github.com/stcksmsh/Mouthpiece">Source on GitHub →</a>
+      </nav>
+    </header>
+
     <main>
-      <h1>Mouthpiece</h1>
-      <p>This site is built and deployed from the <code>website</code> branch of its own repository.</p>
-      <p id="built"></p>
+      <section id="demo" class="demo" aria-labelledby="demo-h">
+        <div class="sec-head">
+          <span class="num mono">01</span>
+          <h2 id="demo-h">Type a word. Hear it cut together.</h2>
+          <p>Fifteen words and phrases, already cut by the engine from its corpus. Your browser joins the fragments with the engine's own 12&nbsp;ms crossfade.</p>
+        </div>
+
+        <div class="desk">
+          <div class="search">
+            <label for="q" class="sr">Search the demo words</label>
+            <input id="q" type="text" autocomplete="off" spellcheck="false" placeholder="try “concatenative”" />
+            <button type="button" id="go" class="btn">Play</button>
+          </div>
+          <div id="chips" class="chips" role="list"></div>
+          <p id="miss" class="miss mono" hidden></p>
+
+          <div class="tape">
+            <canvas id="wave" aria-hidden="true"></canvas>
+            <p id="tape-label" class="tape-label mono">pick a word</p>
+          </div>
+
+          <ol id="scraps" class="scraps" aria-label="Fragments in this word" aria-live="polite"></ol>
+
+          <details class="prov">
+            <summary class="mono">provenance for this render</summary>
+            <pre id="prov" class="mono"></pre>
+          </details>
+          <p class="note">Click a fragment to hear it alone. "Cut from" is the word it was taken out of; the source links to the original recording on archive.org.</p>
+        </div>
+      </section>
+
+      <section class="how" aria-labelledby="how-h">
+        <div class="sec-head">
+          <span class="num mono">02</span>
+          <h2 id="how-h">Four ways to build a word</h2>
+          <p>Mouthpiece tries the most natural option first and falls back one tier at a time.</p>
+        </div>
+        <ol class="tiers">
+          <li>
+            <span class="tn mono">01</span><h3>whole word</h3>
+            <p>The exact word was spoken somewhere in the corpus. Use that clip directly. Most natural, when it's available.</p>
+            <div class="mini" aria-hidden="true"><i class="w">astronaut</i></div>
+          </li>
+          <li>
+            <span class="tn mono">02</span><h3>phrase reuse</h3>
+            <p>Consecutive words were spoken together in one recording. Reuse the whole span as one continuous clip: real co-articulation, no seam.</p>
+            <div class="mini" aria-hidden="true"><i class="w nat">for the</i></div>
+          </li>
+          <li>
+            <span class="tn mono">03</span><h3>syllable stitch</h3>
+            <p>Split the word into syllables, find natural continuity between them where it exists, and splice the rest from unrelated clips.</p>
+            <div class="mini" aria-hidden="true"><i>K-AH-N</i><i class="nat">K-AE-T-AH</i><i>N-EY-T</i></div>
+          </li>
+          <li>
+            <span class="tn mono">04</span><h3>phoneme fallback</h3>
+            <p>No syllable shape exists anywhere in the corpus. Fall all the way down to individual phones. Rougher, but it makes almost any word constructible.</p>
+            <div class="mini" aria-hidden="true"><i>S</i><i>IH</i><i>N</i><i>TH</i><i>AH</i></div>
+          </li>
+        </ol>
+        <ul class="stats">
+          <li><b>165,425</b><span class="mono">words indexed</span></li>
+          <li><b>195,011</b><span class="mono">syllables</span></li>
+          <li><b>491,964</b><span class="mono">phones</span></li>
+        </ul>
+      </section>
+
+      <section class="prov-sec" aria-labelledby="pv-h">
+        <div class="sec-head">
+          <span class="num mono">03</span>
+          <h2 id="pv-h">Every word is attributable</h2>
+          <p>Each render writes a <code>.manifest.json</code> next to the WAV: which recording every word came from, who said it, when, and where in the file. Missing words become 400&nbsp;ms gaps and are listed as <code>found: false</code>. A render never crashes on a missing word.</p>
+        </div>
+        <pre class="manifest mono"><code>{
+  "text": "we must act now",
+  "output_wav": "renders/out.wav",
+  "words": [
+    { "token": "we", "found": true,
+      "source_file": "myspeech.wav", "speaker": "Firstname Lastname",
+      "date": "2003-02-05", "start_s": 12.34, "end_s": 12.56,
+      "confidence": 0.97 },
+    …
+    { "token": "now", "found": false, "gap_s": 0.4 }
+  ]
+}</code></pre>
+      </section>
+
+      <section id="use" class="use" aria-labelledby="use-h">
+        <div class="sec-head">
+          <span class="num mono">04</span>
+          <h2 id="use-h">Run it on your own corpus</h2>
+          <p>Python 3.11, WhisperX for transcription and word alignment, SQLite for the index. A GPU is strongly recommended for transcription.</p>
+        </div>
+        <ol class="run">
+          <li>
+            <h3>Install</h3>
+            <pre class="mono"><code>python3.11 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install torch torchaudio   # CUDA build recommended
+pip install -e .</code></pre>
+          </li>
+          <li>
+            <h3>Ingest a recording</h3>
+            <pre class="mono"><code>mouthpiece ingest corpus/myspeech.wav --metadata corpus/myspeech.json</code></pre>
+            <p>Normalizes to 16&nbsp;kHz mono, transcribes, aligns word timestamps, writes the index. Metadata (speaker, date, event, source URL, license) is optional.</p>
+          </li>
+          <li>
+            <h3>Check coverage, then render</h3>
+            <pre class="mono"><code>mouthpiece coverage "we must act now"
+mouthpiece "we must act now" -o renders/out.wav</code></pre>
+            <p>Writes a 16&nbsp;kHz WAV that drops straight into Reaper, plus its manifest.</p>
+          </li>
+        </ol>
+        <p class="more"><a href="https://github.com/stcksmsh/Mouthpiece#readme">Full README: commands, environment variables, speaker diarization →</a></p>
+      </section>
     </main>
+
+    <footer>
+      <p>Demo fragments are cut from public recordings on <a href="https://archive.org">archive.org</a>; each one links to its source above.</p>
+      <p>Python, WhisperX, SQLite. <a href="https://github.com/stcksmsh/Mouthpiece">github.com/stcksmsh/Mouthpiece</a> · Made by <a href="https://kostavukicevic.com/">Kosta Vukićević</a>.</p>
+    </footer>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
