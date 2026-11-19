@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Mouthpiece — real people's real words, cut and spliced</title>
-    <meta name="description" content="A concatenative speech-collage engine. Type text; receive a WAV assembled from real clips of real people actually saying each word, with full per-word provenance. Not TTS." />
-    <meta property="og:title" content="Mouthpiece — a speech-collage engine" />
-    <meta property="og:description" content="Text in, a WAV of real people's real words out. Every word is an unmodified clip, with provenance. Not TTS." />
+    <meta name="description" content="A concatenative speech-collage engine. Type anything; hear it built from real clips of real people, word by word, syllable by syllable, with provenance for every fragment. Not TTS." />
+    <meta property="og:title" content="Mouthpiece — type anything, hear it cut from real recordings" />
+    <meta property="og:description" content="Text in, a WAV of real people's real words out. Every fragment is an unmodified clip, with provenance. Not TTS." />
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#16130f" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='2' width='14' height='12' rx='1' fill='%23f2ead8' transform='rotate(-6 8 8)'/%3E%3Ctext x='8' y='12.5' font-size='11' font-family='serif' font-weight='700' text-anchor='middle' fill='%23d12a6b'%3EM%3C/text%3E%3C/svg%3E" />
@@ -15,107 +15,136 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Bebas+Neue&family=DM+Serif+Display:ital@0;1&family=Space+Mono:wght@400;700&family=Special+Elite&family=Inter:wght@400;600&display=swap" />
   </head>
   <body>
-    <a class="skip" href="#demo">Skip to the demo</a>
+    <a class="skip" href="#text">Skip to the machine</a>
 
     <header class="hero">
       <p class="kicker mono">a concatenative speech-collage engine</p>
       <h1 id="title" aria-label="Mouthpiece">MOUTHPIECE</h1>
-      <p class="lede">Type text; receive a WAV assembled from real clips of real people actually saying each word, cut from a corpus you supply, with full per-word provenance.</p>
+      <p class="lede">Type anything. Hear it built from real clips of real people actually saying it: whole words where they exist, syllables and single sounds cut out of other words where they don't. Every fragment says where it came from.</p>
       <p class="stamp" aria-label="Not text-to-speech">Not TTS.</p>
-      <p class="sub">Every word in the output is an unmodified clip of someone actually saying it.</p>
-      <button type="button" id="say-name" class="say mono">▶ hear the name, cut from two recordings</button>
-      <nav class="links mono" aria-label="Project">
-        <a href="#demo">Hear it →</a>
-        <a href="#use">Run it →</a>
-        <a href="https://github.com/stcksmsh/Mouthpiece">Source on GitHub →</a>
-      </nav>
     </header>
 
     <main>
-      <section id="demo" class="demo" aria-labelledby="demo-h">
-        <div class="sec-head">
-          <span class="num mono">01</span>
-          <h2 id="demo-h">Type a word. Hear it cut together.</h2>
-          <p>Fifteen words and phrases, already cut by the engine from its corpus. Your browser joins the fragments with the engine's own 12&nbsp;ms crossfade.</p>
-        </div>
-
+      <section class="machine" aria-labelledby="m-h">
+        <h2 id="m-h" class="sr">Make it say something</h2>
         <div class="desk">
-          <div class="search">
-            <label for="q" class="sr">Search the demo words</label>
-            <input id="q" type="text" autocomplete="off" spellcheck="false" placeholder="try “concatenative”" />
-            <button type="button" id="go" class="btn">Play</button>
+          <div class="paper">
+            <label for="text" class="mono tag">your text</label>
+            <textarea id="text" rows="3" spellcheck="false" maxlength="400">real people's real words, cut and spliced</textarea>
+            <div class="row">
+              <button type="button" id="say" class="btn big">Say it</button>
+              <div class="examples" aria-label="Examples">
+                <button type="button" class="ex">we must act now</button>
+                <button type="button" class="ex">hello from the other side of the internet</button>
+                <button type="button" class="ex">houston we have a problem</button>
+                <button type="button" class="ex">supercalifragilisticexpialidocious</button>
+              </div>
+            </div>
           </div>
-          <div id="chips" class="chips" role="list"></div>
-          <p id="miss" class="miss mono" hidden></p>
+
+          <div class="controls">
+            <label class="slider">
+              <span class="mono">fragments</span>
+              <input id="gran" type="range" min="-1" max="1" step="0.05" value="0.5" aria-describedby="gran-help" />
+              <span class="mono">flow</span>
+            </label>
+            <label class="slider">
+              <span class="mono">gap</span>
+              <input id="gap" type="range" min="0" max="300" step="10" value="100" />
+              <output id="gap-out" class="mono">100 ms</output>
+            </label>
+            <button type="button" id="reroll" class="btn ghost" title="Pick different fragments where there's a choice">Reroll</button>
+          </div>
+          <p id="gran-help" class="help">Toward <b>flow</b>, phrases spoken together in one recording are reused whole. Toward <b>fragments</b>, words that exist whole are cut apart anyway, down to single sounds at the far end.</p>
+
+          <div id="coverage" class="coverage" aria-live="polite"></div>
 
           <div class="tape">
             <canvas id="wave" aria-hidden="true"></canvas>
-            <p id="tape-label" class="tape-label mono">pick a word</p>
+            <p id="status" class="status mono" role="status">press “Say it”</p>
           </div>
 
-          <ol id="scraps" class="scraps" aria-label="Fragments in this word" aria-live="polite"></ol>
+          <div class="out-row">
+            <button type="button" id="play" class="btn" disabled>▶ Play again</button>
+            <button type="button" id="dl-wav" class="btn ghost" disabled>Download WAV</button>
+            <button type="button" id="dl-man" class="btn ghost" disabled>Download manifest</button>
+          </div>
 
-          <details class="prov">
-            <summary class="mono">provenance for this render</summary>
-            <pre id="prov" class="mono"></pre>
-          </details>
-          <p class="note">Click a fragment to hear it alone. "Cut from" is the word it was taken out of; the source links to the original recording on archive.org.</p>
+          <ol id="scraps" class="scraps" aria-label="Fragments, in order"></ol>
+          <ul class="legend mono" aria-label="Legend">
+            <li><i class="t-word"></i>whole word</li>
+            <li><i class="t-phrase"></i>phrase reuse</li>
+            <li><i class="t-syllable"></i>syllable stitch</li>
+            <li><i class="t-phone"></i>phoneme fallback</li>
+            <li><i class="t-sounded"></i>sounded out</li>
+            <li><i class="t-missing"></i>missing</li>
+          </ul>
         </div>
       </section>
 
       <section class="how" aria-labelledby="how-h">
         <div class="sec-head">
-          <span class="num mono">02</span>
-          <h2 id="how-h">Four ways to build a word</h2>
-          <p>Mouthpiece tries the most natural option first and falls back one tier at a time.</p>
+          <span class="num mono">01</span>
+          <h2 id="how-h">How a word gets built</h2>
+          <p>Mouthpiece tries the most natural option first and falls back one tier at a time. The colours match the machine above.</p>
         </div>
         <ol class="tiers">
-          <li>
+          <li class="t-word">
             <span class="tn mono">01</span><h3>whole word</h3>
             <p>The exact word was spoken somewhere in the corpus. Use that clip directly. Most natural, when it's available.</p>
-            <div class="mini" aria-hidden="true"><i class="w">astronaut</i></div>
           </li>
-          <li>
+          <li class="t-phrase">
             <span class="tn mono">02</span><h3>phrase reuse</h3>
-            <p>Consecutive words were spoken together in one recording. Reuse the whole span as one continuous clip: real co-articulation, no seam.</p>
-            <div class="mini" aria-hidden="true"><i class="w nat">for the</i></div>
+            <p>Consecutive words were spoken together in one recording. Reuse the whole span as one clip: real co-articulation, no seam.</p>
           </li>
-          <li>
+          <li class="t-syllable">
             <span class="tn mono">03</span><h3>syllable stitch</h3>
-            <p>Split the word into syllables, find natural continuity between them where it exists, and splice the rest from unrelated clips.</p>
-            <div class="mini" aria-hidden="true"><i>K-AH-N</i><i class="nat">K-AE-T-AH</i><i>N-EY-T</i></div>
+            <p>Look the word up in CMUdict, split it into syllables, and splice them from other words, keeping runs that were spoken together where they exist.</p>
           </li>
-          <li>
+          <li class="t-phone">
             <span class="tn mono">04</span><h3>phoneme fallback</h3>
-            <p>No syllable shape exists anywhere in the corpus. Fall all the way down to individual phones. Rougher, but it makes almost any word constructible.</p>
-            <div class="mini" aria-hidden="true"><i>S</i><i>IH</i><i>N</i><i>TH</i><i>AH</i></div>
+            <p>Fall all the way down to individual phones. Rougher, but it makes almost any word constructible. Whichever of 03 and 04 needs fewer splices wins.</p>
           </li>
         </ol>
-        <ul class="stats">
-          <li><b>165,425</b><span class="mono">words indexed</span></li>
-          <li><b>195,011</b><span class="mono">syllables</span></li>
-          <li><b>491,964</b><span class="mono">phones</span></li>
-        </ul>
+        <p class="aside"><b>Sounded out</b> is this page's own addition: a word CMUdict can't place at all gets pieced together from dictionary fragments and letter sounds. The engine leaves a gap instead.</p>
+      </section>
+
+      <section class="bank" aria-labelledby="bank-h">
+        <div class="sec-head">
+          <span class="num mono">02</span>
+          <h2 id="bank-h">What this page carries</h2>
+          <p>The engine works on a full local index. This page carries a slice of it, cut by <code>tools/export_bank.py</code> and loaded in pieces as your text needs them.</p>
+        </div>
+        <div class="two">
+          <div>
+            <h3 class="mono small">full index</h3>
+            <ul class="stats">
+              <li><b>165,425</b><span class="mono">words indexed</span></li>
+              <li><b>195,011</b><span class="mono">syllables</span></li>
+              <li><b>491,964</b><span class="mono">phones</span></li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="mono small">on this page</h3>
+            <ul class="stats" id="bank-stats">
+              <li><b>3,000</b><span class="mono">common words</span></li>
+              <li><b>650</b><span class="mono">phrases</span></li>
+              <li><b>3,510</b><span class="mono">syllable shapes</span></li>
+              <li><b>39</b><span class="mono">phones</span></li>
+            </ul>
+          </div>
+        </div>
       </section>
 
       <section class="prov-sec" aria-labelledby="pv-h">
         <div class="sec-head">
           <span class="num mono">03</span>
-          <h2 id="pv-h">Every word is attributable</h2>
-          <p>Each render writes a <code>.manifest.json</code> next to the WAV: which recording every word came from, who said it, when, and where in the file. Missing words become 400&nbsp;ms gaps and are listed as <code>found: false</code>. A render never crashes on a missing word.</p>
+          <h2 id="pv-h">Every fragment is attributable</h2>
+          <p>Each render writes a <code>.manifest.json</code> next to the WAV: which recording every word came from, who said it, when, and where in the file. Missing words become 400&nbsp;ms gaps listed as <code>found: false</code>. The machine above gives you the same kind of manifest.</p>
         </div>
-        <pre class="manifest mono"><code>{
-  "text": "we must act now",
-  "output_wav": "renders/out.wav",
-  "words": [
-    { "token": "we", "found": true,
-      "source_file": "myspeech.wav", "speaker": "Firstname Lastname",
-      "date": "2003-02-05", "start_s": 12.34, "end_s": 12.56,
-      "confidence": 0.97 },
-    …
-    { "token": "now", "found": false, "gap_s": 0.4 }
-  ]
-}</code></pre>
+        <h3 class="mono small">the recordings</h3>
+        <ul id="sources" class="sources"></ul>
+        <p class="note">All recordings are public domain, from archive.org and the Obama White House archive. LibriVox entries name the book's author; the reader is a LibriVox volunteer.</p>
       </section>
 
       <section id="use" class="use" aria-labelledby="use-h">
@@ -140,7 +169,7 @@ pip install -e .</code></pre>
             <h3>Check coverage, then render</h3>
             <pre class="mono"><code>mouthpiece coverage "we must act now"
 mouthpiece "we must act now" -o renders/out.wav</code></pre>
-            <p>Writes a 16&nbsp;kHz WAV that drops straight into Reaper, plus its manifest.</p>
+            <p>Writes a WAV that drops straight into Reaper, plus its manifest.</p>
           </li>
         </ol>
         <p class="more"><a href="https://github.com/stcksmsh/Mouthpiece#readme">Full README: commands, environment variables, speaker diarization →</a></p>
@@ -148,8 +177,8 @@ mouthpiece "we must act now" -o renders/out.wav</code></pre>
     </main>
 
     <footer>
-      <p>Demo fragments are cut from public recordings on <a href="https://archive.org">archive.org</a>; each one links to its source above.</p>
-      <p>Python, WhisperX, SQLite. <a href="https://github.com/stcksmsh/Mouthpiece">github.com/stcksmsh/Mouthpiece</a> · Made by <a href="https://kostavukicevic.com/">Kosta Vukićević</a>.</p>
+      <p>Python, WhisperX, SQLite, CMUdict. This page: the same matching rules in JavaScript, Web Audio, no server. <a href="https://github.com/stcksmsh/Mouthpiece">github.com/stcksmsh/Mouthpiece</a></p>
+      <p>Made by <a href="https://kostavukicevic.com/">Kosta Vukićević</a>.</p>
     </footer>
 
     <script type="module" src="/src/main.js"></script>
