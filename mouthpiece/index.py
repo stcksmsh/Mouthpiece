@@ -364,18 +364,12 @@ def all_word_instances(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def word_instances_missing_syllables(conn: sqlite3.Connection) -> list[dict]:
+def word_instances_missing_units(conn: sqlite3.Connection, kind: str) -> list[dict]:
+    """Word instances with no rows in the `kind` ("syllable" or "phone") table."""
+    table = _UNITS[kind]["table"]
     rows = conn.execute(
-        """SELECT id, word, start_s, end_s FROM word_instances
-           WHERE id NOT IN (SELECT DISTINCT word_instance_id FROM syllable_instances)"""
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def word_instances_missing_phones(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute(
-        """SELECT id, word, start_s, end_s FROM word_instances
-           WHERE id NOT IN (SELECT DISTINCT word_instance_id FROM phone_instances)"""
+        f"""SELECT id, word, start_s, end_s FROM word_instances
+            WHERE id NOT IN (SELECT DISTINCT word_instance_id FROM {table})"""
     ).fetchall()
     return [dict(r) for r in rows]
 

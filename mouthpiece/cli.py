@@ -354,8 +354,8 @@ def cmd_resyllabify(args: argparse.Namespace) -> None:
         needs_phone = {w["id"] for w in all_words}
         target_words = all_words
     else:
-        missing_syll  = index.word_instances_missing_syllables(conn)
-        missing_phone = index.word_instances_missing_phones(conn)
+        missing_syll  = index.word_instances_missing_units(conn, "syllable")
+        missing_phone = index.word_instances_missing_units(conn, "phone")
         needs_syll  = {w["id"] for w in missing_syll}
         needs_phone = {w["id"] for w in missing_phone}
         by_id = {w["id"]: w for w in missing_syll + missing_phone}
