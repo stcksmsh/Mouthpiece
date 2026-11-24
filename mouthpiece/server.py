@@ -334,7 +334,10 @@ def api_reroll(render_id: str, word_index: int):
     token       = render["matches"][word_index][0]
     current_row = render["matches"][word_index][1]
     old_w       = render["words"][word_index]
-    rng         = np.random.default_rng()
+    # Per (render, word) counter so the same seed and reroll sequence replays identically;
+    # it only advances on success (below), so a 400 leaves the sequence unchanged.
+    count       = render.setdefault("rerolls", {}).get(word_index, 0)
+    rng         = np.random.default_rng([render["seed"], word_index, count])
     conn        = _conn()
     criteria    = render.get("criteria", {})
     diction     = criteria.get("diction", 0.0)
@@ -399,6 +402,7 @@ def api_reroll(render_id: str, word_index: int):
         row = alts[int(rng.choice(len(alts), p=weights))]
         _replace_match(render, word_index, token, row)
 
+    render["rerolls"][word_index] = count + 1
     _assemble(render)
     return _render_response(render)
 

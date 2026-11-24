@@ -39,3 +39,50 @@ def test_reroll_gap_token_is_400():
     with pytest.raises(server.HTTPException) as exc:
         server.api_reroll(r["id"], 1)
     assert exc.value.status_code == 400
+
+
+# "to" has three instances in the fixture, the only word with real choice to reroll between.
+TEXT = "to to to"
+
+
+def _ids(r):
+    return [w.get("word_instance_id") for w in r["words"]]
+
+
+def _render():
+    return server.api_render(server.RenderRequest(text=TEXT, seed=5))
+
+
+@pytest.mark.usefixtures("env")
+def test_reroll_is_reproducible_for_same_seed():
+    # Compare every intermediate state so an unseeded RNG is very unlikely to match by chance.
+    runs = []
+    for _ in range(2):
+        r = _render()
+        runs.append([_ids(server.api_reroll(r["id"], i % 3)) for i in range(30)])
+    assert runs[0] == runs[1]
+
+
+@pytest.mark.usefixtures("env")
+def test_reroll_order_across_words_does_not_matter():
+    def picks(order):
+        r = _render()
+        seq = {0: [], 2: []}
+        for _ in range(12):
+            for w in order:
+                seq[w].append(_ids(server.api_reroll(r["id"], w))[w])
+        return seq
+
+    # Each word's full pick sequence must match whichever word goes first.
+    assert picks((0, 2)) == picks((2, 0))
+
+
+@pytest.mark.usefixtures("env")
+def test_failed_reroll_does_not_advance_sequence():
+    r = server.api_render(server.RenderRequest(text="to zzyzxqq to", seed=5))
+    ref = server.api_render(server.RenderRequest(text="to zzyzxqq to", seed=5))
+    for _ in range(5):
+        with pytest.raises(server.HTTPException):
+            server.api_reroll(r["id"], 1)
+    got = [_ids(server.api_reroll(r["id"], 0)) for _ in range(10)]
+    assert got == [_ids(server.api_reroll(ref["id"], 0)) for _ in range(10)]
