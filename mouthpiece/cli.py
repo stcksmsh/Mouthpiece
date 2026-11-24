@@ -341,6 +341,10 @@ def cmd_resyllabify(args: argparse.Namespace) -> None:
     p = _paths()
     conn = index.get_connection(p["db"])
 
+    n_norm = index.normalize_stored_words(conn)
+    if n_norm:
+        print(f"Stripped punctuation from {n_norm} stored word(s) (e.g. 'week,' -> 'week').")
+
     if args.reindex:
         all_words = index.all_word_instances(conn)
         conn.execute("DELETE FROM syllable_instances")
@@ -511,7 +515,7 @@ def main() -> None:
     # --- resyllabify ---
     p_resyll = sub.add_parser(
         "resyllabify",
-        help="Backfill syllable-level index entries for already-ingested words",
+        help="Strip punctuation from stored words, then backfill syllable and phone entries",
     )
     p_resyll.add_argument(
         "--reindex", action="store_true",

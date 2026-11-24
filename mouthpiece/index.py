@@ -1,5 +1,6 @@
 """SQLite schema, connection management, and low-level DB operations."""
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -115,6 +116,29 @@ def insert_source(
     return conn.execute("SELECT id FROM sources WHERE filename=?", (filename,)).fetchone()[0]
 
 
+_EDGE_PUNCT = re.compile(r"^[^\w']+|[^\w']+$")
+
+
+def normalize_word(word: str) -> str:
+    """Lowercase and strip leading/trailing punctuation ('week,' -> 'week', 'mr.' -> 'mr').
+
+    WhisperX attaches punctuation to words, but lookups use clean tokens, so an
+    unstripped 'week,' can never match. Inner punctuation ('eye-to-eye') and
+    apostrophes stay. A word that is only punctuation is kept as-is.
+    """
+    w = word.lower().strip()
+    return _EDGE_PUNCT.sub("", w) or w
+
+
+def normalize_stored_words(conn: sqlite3.Connection) -> int:
+    """Apply normalize_word() to every stored word instance. Returns rows changed."""
+    rows = conn.execute("SELECT id, word FROM word_instances").fetchall()
+    changes = [(normalize_word(r["word"]), r["id"]) for r in rows if normalize_word(r["word"]) != r["word"]]
+    conn.executemany("UPDATE word_instances SET word=? WHERE id=?", changes)
+    conn.commit()
+    return len(changes)
+
+
 def insert_word_instances(conn: sqlite3.Connection, source_id: int, words: list[dict]) -> None:
     conn.executemany(
         """INSERT INTO word_instances
@@ -124,7 +148,7 @@ def insert_word_instances(conn: sqlite3.Connection, source_id: int, words: list[
         [
             (
                 source_id,
-                w["word"].lower().strip(),
+                normalize_word(w["word"]),
                 w.get("lemma"),
                 w["start"],
                 w["end"],

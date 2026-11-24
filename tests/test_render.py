@@ -76,3 +76,9 @@ def test_render_path_does_not_import_torch():
         "sys.exit('torch' in sys.modules)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False, timeout=120).returncode == 0
+
+
+def test_punctuated_transcript_words_are_matchable(run_cli, tmp_path):
+    # The fixture transcript stores 'week,' 'nation,' and 'me.' exactly as WhisperX emitted them.
+    manifest, _ = _render(run_cli, tmp_path, "punct", "this week the nation before me", "--seed", "1")
+    assert all(w["found"] and not w.get("stitched") for w in manifest["words"])
