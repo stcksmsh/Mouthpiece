@@ -6,6 +6,7 @@
     mouthpiece batch-ingest sources.csv
     mouthpiece coverage "some text"
     mouthpiece sources
+    mouthpiece resyllabify
 """
 
 import argparse
@@ -15,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-_SUBCOMMANDS = {"ingest", "batch-ingest", "render", "coverage", "sources", "remove", "wipe", "candidates", "serve"}
+_SUBCOMMANDS = {"ingest", "batch-ingest", "render", "coverage", "sources", "remove", "wipe", "candidates", "serve", "resyllabify"}
 
 
 def _paths() -> dict[str, Path]:
@@ -88,10 +89,15 @@ def cmd_render(args: argparse.Namespace) -> None:
     print(f"Seed: {seed}  (re-render with --seed {seed} to reproduce)")
 
     print(f"Matching: {text!r}")
-    matches = match.match_text(text, conn, rng=rng, nth_overrides=nth)
+    matches = match.match_text(
+        text, conn, rng=rng, nth_overrides=nth,
+        granularity=args.granularity, diction=args.diction, emotion=args.emotion,
+    )
     report  = match.coverage_report(matches)
 
-    print(f"Coverage: {report['found']}/{report['total']} words found")
+    print(f"Coverage: {report['found']}/{report['total']} words found "
+          f"({report['found_word']} whole-word, {report['found_phrase']} phrase, "
+          f"{report['found_syllables']} syllable-stitched)")
     if report["missing"]:
         print(f"Missing:  {', '.join(report['missing_tokens'])}")
 
@@ -134,15 +140,28 @@ def cmd_candidates(args: argparse.Namespace) -> None:
 
 
 def cmd_coverage(args: argparse.Namespace) -> None:
+    import numpy as np
     from . import index, match
 
     p = _paths()
     conn = index.get_connection(p["db"])
-    matches = match.match_text(args.text, conn)
+    # Phrase-search and forced-syllable branches only trigger with an rng — supply
+    # one whenever a slider is actually in use, else stay deterministic (unchanged).
+    rng = np.random.default_rng() if (args.granularity or args.diction or args.emotion) else None
+    matches = match.match_text(
+        args.text, conn, rng=rng,
+        granularity=args.granularity, diction=args.diction, emotion=args.emotion,
+    )
     conn.close()
 
     report = match.coverage_report(matches)
-    print(f"Coverage: {report['found']}/{report['total']} words")
+    print(f"Coverage: {report['found']}/{report['total']} words "
+          f"({report['found_word']} whole-word, {report['found_phrase']} phrase, "
+          f"{report['found_syllables']} syllable-stitched)")
+    if report["found_phrase_tokens"]:
+        print(f"Phrases:  {', '.join(report['found_phrase_tokens'])}")
+    if report["found_syllable_tokens"]:
+        print(f"Stitched: {', '.join(report['found_syllable_tokens'])}")
     if report["missing_tokens"]:
         print(f"Missing:  {', '.join(report['missing_tokens'])}")
     else:
@@ -249,6 +268,16 @@ def cmd_remove(args: argparse.Namespace) -> None:
             conn.close()
             return
 
+    conn.execute(
+        """DELETE FROM phone_instances WHERE word_instance_id IN
+               (SELECT id FROM word_instances WHERE source_id=?)""",
+        (source_id,),
+    )
+    conn.execute(
+        """DELETE FROM syllable_instances WHERE word_instance_id IN
+               (SELECT id FROM word_instances WHERE source_id=?)""",
+        (source_id,),
+    )
     conn.execute("DELETE FROM word_instances WHERE source_id=?", (source_id,))
     conn.execute("DELETE FROM sources WHERE id=?", (source_id,))
     conn.commit()
@@ -289,6 +318,8 @@ def cmd_wipe(args: argparse.Namespace) -> None:
             conn.close()
             return
 
+    conn.execute("DELETE FROM phone_instances")
+    conn.execute("DELETE FROM syllable_instances")
     conn.execute("DELETE FROM word_instances")
     conn.execute("DELETE FROM sources")
     conn.execute("DELETE FROM word_fts")
@@ -302,6 +333,58 @@ def cmd_wipe(args: argparse.Namespace) -> None:
         print(f"  Deleted {len(wavs)} WAV file(s) from {p['corpus']}/")
 
     conn.close()
+
+
+def cmd_resyllabify(args: argparse.Namespace) -> None:
+    from . import index, phonemes
+
+    p = _paths()
+    conn = index.get_connection(p["db"])
+
+    n_norm = index.normalize_stored_words(conn)
+    if n_norm:
+        print(f"Stripped punctuation from {n_norm} stored word(s) (e.g. 'week,' -> 'week').")
+
+    if args.reindex:
+        all_words = index.all_word_instances(conn)
+        conn.execute("DELETE FROM syllable_instances")
+        conn.execute("DELETE FROM phone_instances")
+        conn.commit()
+        needs_syll  = {w["id"] for w in all_words}
+        needs_phone = {w["id"] for w in all_words}
+        target_words = all_words
+    else:
+        missing_syll  = index.word_instances_missing_units(conn, "syllable")
+        missing_phone = index.word_instances_missing_units(conn, "phone")
+        needs_syll  = {w["id"] for w in missing_syll}
+        needs_phone = {w["id"] for w in missing_phone}
+        by_id = {w["id"]: w for w in missing_syll + missing_phone}
+        target_words = list(by_id.values())
+
+    print(f"Processing {len(target_words)} word instance(s) ...")
+    n_words = n_syll = n_phone = n_oov = 0
+    for w in target_words:
+        did_something = False
+        if w["id"] in needs_syll:
+            rows = phonemes.compute_syllable_rows(w["word"], w["start_s"], w["end_s"])
+            if rows:
+                index.insert_syllable_instances(conn, w["id"], rows)
+                n_syll += len(rows)
+                did_something = True
+        if w["id"] in needs_phone:
+            prows = phonemes.compute_phone_rows(w["word"], w["start_s"], w["end_s"])
+            if prows:
+                index.insert_phone_instances(conn, w["id"], prows)
+                n_phone += len(prows)
+                did_something = True
+        if did_something:
+            n_words += 1
+        else:
+            n_oov += 1
+
+    conn.close()
+    print(f"Done. {n_words} words processed ({n_syll} syllables, {n_phone} phones), "
+          f"{n_oov} not in CMUdict.")
 
 
 def cmd_sources(args: argparse.Namespace) -> None:
@@ -367,10 +450,25 @@ def main() -> None:
         "--seed", type=int, default=None,
         help="RNG seed for reproducible renders (printed after each render)",
     )
+    p_render.add_argument(
+        "--granularity", type=float, default=0.0,
+        help="-1 (syllable-per-syllable) .. 0 (default) .. +1 (long uniform phrases)",
+    )
+    p_render.add_argument(
+        "--diction", type=float, default=0.0,
+        help="-1 (mumbled) .. 0 (default) .. +1 (crisp)",
+    )
+    p_render.add_argument(
+        "--emotion", type=float, default=0.0,
+        help="-1 (flat) .. 0 (default) .. +1 (expressive)",
+    )
 
     # --- coverage ---
     p_cov = sub.add_parser("coverage", help="Check word coverage without rendering")
     p_cov.add_argument("text", help="Text to check")
+    p_cov.add_argument("--granularity", type=float, default=0.0)
+    p_cov.add_argument("--diction", type=float, default=0.0)
+    p_cov.add_argument("--emotion", type=float, default=0.0)
 
     # --- batch-ingest ---
     p_batch = sub.add_parser("batch-ingest", help="Ingest multiple files from a CSV")
@@ -414,6 +512,16 @@ def main() -> None:
     # --- sources ---
     sub.add_parser("sources", help="List ingested sources")
 
+    # --- resyllabify ---
+    p_resyll = sub.add_parser(
+        "resyllabify",
+        help="Strip punctuation from stored words, then backfill syllable and phone entries",
+    )
+    p_resyll.add_argument(
+        "--reindex", action="store_true",
+        help="Recompute syllables for all words, not just ones missing them",
+    )
+
     args = parser.parse_args()
 
     if args.command == "serve":
@@ -431,4 +539,5 @@ def main() -> None:
         "remove":        cmd_remove,
         "wipe":          cmd_wipe,
         "sources":       cmd_sources,
+        "resyllabify":   cmd_resyllabify,
     }[args.command](args)
