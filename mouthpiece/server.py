@@ -380,6 +380,8 @@ def api_reroll(render_id: str, word_index: int):
         current_id = old_w.get("word_instance_id")
         rows = index.search_word(conn, token, limit=20)
         conn.close()
+        if not rows:
+            raise HTTPException(400, f"No candidate clips for '{token}'")
         alts = [r for r in rows if r["id"] != current_id] or rows
         weights = np.array([(r["confidence"] or 0.5) for r in alts], dtype=np.float64)
         if diction:

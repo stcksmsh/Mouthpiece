@@ -30,3 +30,12 @@ def test_render_then_reroll_and_adjust():
     r = server.api_adjust(r["id"], 1, server.AdjustRequest(speed=1.5, pitch=2.0))
     assert (r["words"][1]["speed"], r["words"][1]["pitch"]) == (1.5, 2.0)
     assert r["duration_s"] > 0
+
+
+@pytest.mark.usefixtures("env")
+def test_reroll_gap_token_is_400():
+    r = server.api_render(server.RenderRequest(text="deliver zzyzxqq address", seed=5))
+    assert r["words"][1]["found"] is False
+    with pytest.raises(server.HTTPException) as exc:
+        server.api_reroll(r["id"], 1)
+    assert exc.value.status_code == 400

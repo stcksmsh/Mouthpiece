@@ -117,6 +117,7 @@ def insert_source(
 
 
 _EDGE_PUNCT = re.compile(r"^[^\w']+|[^\w']+$")
+_QUOTED = re.compile(r"^'(.+)'$")
 
 
 def normalize_word(word: str) -> str:
@@ -124,10 +125,13 @@ def normalize_word(word: str) -> str:
 
     WhisperX attaches punctuation to words, but lookups use clean tokens, so an
     unstripped 'week,' can never match. Inner punctuation ('eye-to-eye') and
-    apostrophes stay. A word that is only punctuation is kept as-is.
+    apostrophes stay, except a pair wrapping the whole token ("'hello'" -> 'hello');
+    one-sided ones ("'em", "goin'") are contractions. A word that is only punctuation
+    is kept as-is.
     """
     w = word.lower().strip()
-    return _EDGE_PUNCT.sub("", w) or w
+    w = _EDGE_PUNCT.sub("", w) or w
+    return _QUOTED.sub(r"\1", w)
 
 
 def normalize_stored_words(conn: sqlite3.Connection) -> int:

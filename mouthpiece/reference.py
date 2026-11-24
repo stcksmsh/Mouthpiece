@@ -90,7 +90,7 @@ def compute_pitch_adjustments(
     """Given the current render's words (with token/f0_hz/duration_s) and a reference
     recording's word list (with word/f0_mean/start/end), return per-word
     {word_index, pitch_st, speed} adjustments that push the render toward the
-    reference's prosody. Falls back to positional alignment when token sets differ."""
+    reference's prosody. Only words that _align_indices pairs are adjusted."""
     render_tokens = [w["token"] for w in render_words]
     ref_tokens = [w["word"] for w in reference_words]
     pairs = _align_indices(render_tokens, ref_tokens)
