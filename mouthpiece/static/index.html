@@ -87,6 +87,9 @@ header{display:flex;align-items:center;justify-content:space-between;
 .tile.t-locked{background:var(--locked-bg)}
 .tile.t-adj::after{content:'';position:absolute;bottom:3px;right:3px;
   width:4px;height:4px;border-radius:50%;background:var(--accent);opacity:.7}
+.tile.t-stitched{border-left-style:dashed}
+.tile.t-stitched .t-word{border-bottom:1px dashed var(--border2)}
+.tile.t-phrase{box-shadow:inset 0 -3px 0 -1px var(--accent)}
 .cf-hi{border-left-color:var(--green)!important}
 .cf-md{border-left-color:var(--yellow)!important}
 .cf-lo{border-left-color:var(--red)!important}
@@ -125,6 +128,16 @@ header{display:flex;align-items:center;justify-content:space-between;
 .pros-field{display:flex;align-items:center;gap:6px}
 .pros-field label{font-size:8px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
 .pros-field input[type=range]{width:100px;accent-color:var(--accent)}
+
+/* criteria sliders */
+#criteriaRow{display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+  padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg)}
+
+/* reference match panel */
+#refPanel{display:none;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:8px 12px 8px 28px;border-bottom:1px solid var(--border);background:var(--bg)}
+#refPanel.open{display:flex}
+#refFile{font-size:8px;color:var(--muted)}
 .pros-field input[type=number]{width:52px;background:var(--surface);border:1px solid var(--border2);
   color:var(--text);font-family:inherit;font-size:10px;padding:2px 4px}
 .pros-field span.val{font-size:9px;color:var(--text);width:34px;flex-shrink:0}
@@ -141,6 +154,8 @@ header{display:flex;align-items:center;justify-content:space-between;
   cursor:pointer;padding:0 2px;line-height:1;margin-left:auto}
 .cand-close:hover{color:var(--text)}
 #candList{overflow-y:auto;flex:1}
+.syll-group-header{padding:8px 28px 4px;font-size:8px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent);background:var(--bg)}
 .cand-row{display:flex;align-items:center;gap:14px;
   padding:7px 28px;border-bottom:1px solid var(--border);
   font-size:10px;color:var(--muted);transition:background .1s}
@@ -206,6 +221,27 @@ header{display:flex;align-items:center;justify-content:space-between;
   <button class="btn primary" id="renderBtn" onclick="doRender()">Render</button>
 </div>
 
+<div id="criteriaRow">
+  <div class="pros-field">
+    <label for="critGran">granular ↔ uniform</label>
+    <input type="range" id="critGran" min="-1" max="1" step="0.05" value="0"
+           oninput="document.getElementById('critGranVal').textContent = (+this.value).toFixed(2)">
+    <span class="val" id="critGranVal">0.00</span>
+  </div>
+  <div class="pros-field">
+    <label for="critDict">mumbled ↔ crisp</label>
+    <input type="range" id="critDict" min="-1" max="1" step="0.05" value="0"
+           oninput="document.getElementById('critDictVal').textContent = (+this.value).toFixed(2)">
+    <span class="val" id="critDictVal">0.00</span>
+  </div>
+  <div class="pros-field">
+    <label for="critEmo">flat ↔ expressive</label>
+    <input type="range" id="critEmo" min="-1" max="1" step="0.05" value="0"
+           oninput="document.getElementById('critEmoVal').textContent = (+this.value).toFixed(2)">
+    <span class="val" id="critEmoVal">0.00</span>
+  </div>
+</div>
+
 <div id="infoBar">
   <div class="info-cell">seed&nbsp;<b id="iSeed">—</b></div>
   <div class="info-cell">duration&nbsp;<b id="iDur">—</b></div>
@@ -223,6 +259,7 @@ header{display:flex;align-items:center;justify-content:space-between;
             title="Normalize speaking rate by phoneme count across clips">normalize speed</button>
     <button class="lane-btn" onclick="resetAllAdj()">reset all</button>
     <button class="lane-btn" id="prosodicToggleBtn" onclick="toggleProsodicPanel()">pitch match</button>
+    <button class="lane-btn" id="refToggleBtn" onclick="toggleRefPanel()">match reference</button>
     <span class="lane-hint">drag dots · click to seek · ←→ select · ↑↓ speed · ⇧↑↓ pitch · L lock · R reroll · N normalize · ⌃Z undo</span>
   </div>
   <div id="prosodicPanel">
@@ -246,6 +283,12 @@ header{display:flex;align-items:center;justify-content:space-between;
     </div>
     <label class="chk"><input type="checkbox" id="prosApplySpeed"> apply rate</label>
     <button class="lane-btn" onclick="doAutoPitch()">apply pitch match</button>
+  </div>
+  <div id="refPanel">
+    <input type="file" id="refFile" accept="audio/*">
+    <label class="chk"><input type="checkbox" id="refApplyPitch" checked> apply pitch</label>
+    <label class="chk"><input type="checkbox" id="refApplySpeed" checked> apply speed</label>
+    <button class="lane-btn" onclick="doReferenceMatch()">apply reference match</button>
   </div>
   <svg id="lane" height="132"></svg>
 </div>
@@ -432,19 +475,51 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 const GAP_S = 0.10, MISSING_S = 0.40, CLIP_PAD = 0.04;
 
 function computeOutputTimes(words) {
+  // A phrase run (consecutive words sharing phrase_id) is ONE continuous cut
+  // in the real audio — no per-member pad/gap — so its members share one
+  // padded span, subdivided proportionally by each member's own duration.
   let t = 0;
-  return words.map((w, i) => {
+  const times = new Array(words.length);
+  let i = 0;
+  while (i < words.length) {
     if (i > 0) t += GAP_S;
-    const startT = t;
+    const w = words[i];
+
     if (!w.found) {
+      const startT = t;
       t += MISSING_S;
-    } else {
-      const nat = w.duration_s || 0;
-      const pad = Math.min(CLIP_PAD, Math.max(nat * 0.25, 0.010));
-      t += (nat + 2 * pad) / Math.max(w.speed ?? 1, 0.1);
+      times[i] = {startT, endT: t};
+      i++;
+      continue;
     }
-    return {startT, endT: t};
-  });
+
+    if (w.phrase_id != null && w.phrase_pos === 0) {
+      const plen  = w.phrase_len || 1;
+      const group = words.slice(i, i + plen);
+      const durs  = group.map(g => g.duration_s || 0);
+      const totalNat = durs.reduce((a, b) => a + b, 0);
+      const pad   = Math.min(CLIP_PAD, Math.max(totalNat * 0.25, 0.010));
+      const speed = Math.max(group[0].speed ?? 1, 0.1);
+      const innerSpan = totalNat / speed;
+      let subT = t + pad / speed;
+      for (let k = 0; k < group.length; k++) {
+        const seg = totalNat > 0 ? (durs[k] / totalNat) * innerSpan : 0;
+        times[i + k] = {startT: subT, endT: subT + seg};
+        subT += seg;
+      }
+      t = subT + pad / speed;
+      i += plen;
+      continue;
+    }
+
+    const startT = t;
+    const nat = w.duration_s || 0;
+    const pad = Math.min(CLIP_PAD, Math.max(nat * 0.25, 0.010));
+    t += (nat + 2 * pad) / Math.max(w.speed ?? 1, 0.1);
+    times[i] = {startT, endT: t};
+    i++;
+  }
+  return times;
 }
 
 /* X position in lane from output time */
@@ -638,6 +713,18 @@ lane.addEventListener('mousedown', e => {
   e.preventDefault();
 });
 
+function _syncPhraseMates(idx) {
+  const w = S.render.words[idx];
+  if (!w || w.phrase_id == null) return;
+  S.render.words.forEach((other, j) => {
+    if (j !== idx && other.phrase_id === w.phrase_id) {
+      other.speed = w.speed;
+      other.pitch = w.pitch;
+      pendingAdj[j] = {speed: other.speed ?? 1, pitch: other.pitch ?? 0};
+    }
+  });
+}
+
 window.addEventListener('mousemove', e => {
   if (!drag || !S.render) return;
   dragMoved = true;
@@ -648,6 +735,7 @@ window.addEventListener('mousemove', e => {
   if (drag.track === 'speed') w.speed = +yToSpeed(y).toFixed(3);
   else                         w.pitch = +yToPitch(y).toFixed(2);
   pendingAdj[drag.word] = {speed: w.speed ?? 1, pitch: w.pitch ?? 0};
+  _syncPhraseMates(drag.word);
   buildLane();
 });
 
@@ -699,6 +787,7 @@ window.addEventListener('touchmove', e => {
   if (drag.track === 'speed') w.speed = +yToSpeed(y).toFixed(3);
   else                         w.pitch = +yToPitch(y).toFixed(2);
   pendingAdj[drag.word] = {speed: w.speed ?? 1, pitch: w.pitch ?? 0};
+  _syncPhraseMates(drag.word);
   buildLane();
 }, {passive: true});
 
@@ -833,6 +922,11 @@ function toggleProsodicPanel() {
   document.getElementById('prosodicToggleBtn').classList.toggle('on', on);
 }
 
+function toggleRefPanel() {
+  const on = document.getElementById('refPanel').classList.toggle('open');
+  document.getElementById('refToggleBtn').classList.toggle('on', on);
+}
+
 async function doAutoPitch() {
   if (!S.render) return;
   markDirty();
@@ -857,12 +951,47 @@ async function doAutoPitch() {
   } catch(e) { setStatus('error: ' + e.message); }
 }
 
+async function doReferenceMatch() {
+  if (!S.render) return;
+  const f = document.getElementById('refFile').files[0];
+  if (!f) { setStatus('choose a reference audio file first'); return; }
+  markDirty();
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('apply_pitch', document.getElementById('refApplyPitch').checked);
+  fd.append('apply_speed', document.getElementById('refApplySpeed').checked);
+  setStatus('analyzing reference audio… (can take a minute)');
+  setBusy(true);
+  try {
+    if (_undoSnap) {
+      undoStack.push(_undoSnap);
+      if (undoStack.length > MAX_UNDO) undoStack.shift();
+      redoStack.length = 0;
+      _undoSnap = null;
+    }
+    const r = await fetch(`/api/render/${S.render.id}/reference_match`, {method: 'POST', body: fd});
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({detail: r.statusText}));
+      throw new Error(e.detail || r.statusText);
+    }
+    const render = await r.json();
+    applyRender(render, S.sel);
+    setStatus('done');
+  } catch(e) { setStatus('error: ' + e.message); }
+  setBusy(false);
+}
+
 /* ── Actions ────────────────────────────────────────────── */
 async function doRender() {
   const text = document.getElementById('textInput').value.trim();
   if (!text) return;
   const sv = document.getElementById('seedInput').value;
-  const body = {text};
+  const body = {
+    text,
+    granularity: parseFloat(document.getElementById('critGran').value),
+    diction:     parseFloat(document.getElementById('critDict').value),
+    emotion:     parseFloat(document.getElementById('critEmo').value),
+  };
   if (sv) body.seed = parseInt(sv, 10);
   setStatus('rendering…');
   setBusy(true);
@@ -895,6 +1024,17 @@ async function doSwap(i, instanceId) {
   } catch(e) { setStatus('error: ' + e.message); }
 }
 
+async function doSwapSyllable(i, syllIdx, instanceId) {
+  setStatus('swapping syllable…');
+  try {
+    const render = await api('POST', `/api/render/${S.render.id}/swap_syllable/${i}/${syllIdx}`,
+                              {syllable_instance_id: instanceId});
+    applyRender(render, i);
+    if (S.sel === i) await refreshCands(i, render.words[i]);
+    setStatus('done');
+  } catch(e) { setStatus('error: ' + e.message); }
+}
+
 async function doLock(i, ev) {
   ev.stopPropagation();
   const next = !S.render.words[i]?.locked;
@@ -917,6 +1057,7 @@ async function selectWord(i) {
   if (!w?.found) return;
 
   document.getElementById('candTitle').textContent = `candidates — "${w.token}"`;
+  document.getElementById('pitchSortBtn').style.display = w.stitched ? 'none' : '';
   document.getElementById('candPanel').classList.add('open');
   setStatus('loading candidates…');
   await refreshCands(i, w);
@@ -924,15 +1065,26 @@ async function selectWord(i) {
 
 async function refreshCands(i, w) {
   try {
-    const cands = await api('GET', `/api/candidates/${encodeURIComponent(w.token)}`);
-    buildCandList(w, i, cands);
-    setStatus(`${cands.length} candidates for "${w.token}"`);
+    if (w.stitched) {
+      const data = await api('GET', `/api/syllable_candidates/${encodeURIComponent(w.token)}`);
+      buildSyllableCandList(w, i, data.syllables);
+      setStatus(`${data.syllables.length} syllable(s) for "${w.token}"`);
+    } else {
+      const cands = await api('GET', `/api/candidates/${encodeURIComponent(w.token)}`);
+      buildCandList(w, i, cands);
+      setStatus(`${cands.length} candidates for "${w.token}"`);
+    }
   } catch(e) { setStatus('error: ' + e.message); }
 }
 
 function doPreview(id) {
   const a = document.getElementById('preview');
   a.src = `/api/clip/${id}/preview?t=${Date.now()}`;
+  a.play();
+}
+function doPreviewSyllable(id) {
+  const a = document.getElementById('preview');
+  a.src = `/api/syllable/${id}/preview?t=${Date.now()}`;
   a.play();
 }
 function doDownload() {
@@ -953,6 +1105,15 @@ function applyRender(render, keepSel) {
 
   document.getElementById('seedInput').value   = render.seed;
   document.getElementById('iSeed').textContent = render.seed;
+  if (render.criteria) {
+    const c = render.criteria;
+    document.getElementById('critGran').value = c.granularity;
+    document.getElementById('critGranVal').textContent = (+c.granularity).toFixed(2);
+    document.getElementById('critDict').value = c.diction;
+    document.getElementById('critDictVal').textContent = (+c.diction).toFixed(2);
+    document.getElementById('critEmo').value = c.emotion;
+    document.getElementById('critEmoVal').textContent = (+c.emotion).toFixed(2);
+  }
   document.getElementById('iDur').textContent  = render.duration_s.toFixed(2) + 's';
   const found = render.words.filter(w => w.found).length;
   document.getElementById('iCov').textContent  = `${found}/${render.words.length}`;
@@ -986,17 +1147,26 @@ function makeTile(w, i) {
     !w.found ? 'missing' : '',
     w.locked  ? 't-locked' : '',
     isAdj(w)  ? 't-adj' : '',
+    w.stitched ? 't-stitched' : '',
+    w.phrase_id != null ? 't-phrase' : '',
     w.found   ? cfClass(w.confidence) : '',
   ].filter(Boolean).join(' ');
   d.dataset.i = i;
+  if (w.phrase_id != null) d.dataset.phrase = w.phrase_id;
   d.style.setProperty('--tilt', tiltDeg(w) + 'deg');
   d.onclick = () => selectWord(i);
 
   if (w.found) {
+    const line1 = w.stitched
+      ? `${w.syllables.length} syllable${w.syllables.length===1?'':'s'} · stitched`
+      : truncate(w.speaker || '—', 18);
+    const line2 = w.stitched
+      ? truncate(w.speaker || '—', 22)
+      : (w.date || '—');
     d.innerHTML = `
       <div class="t-word">${esc(w.token)}</div>
-      <div class="t-speaker">${esc(truncate(w.speaker || '—', 18))}</div>
-      <div class="t-date">${esc(w.date || '—')}</div>
+      <div class="t-speaker">${esc(line1)}</div>
+      <div class="t-date">${esc(line2)}</div>
       <div class="t-actions">
         <button class="t-btn${w.locked?' on':''}" onclick="doLock(${i},event)">◈</button>
         <button class="t-btn" onclick="doReroll(${i},event)">↻</button>
@@ -1098,6 +1268,54 @@ function buildCandList(w, i, cands) {
   _pitchSort = false;
   document.getElementById('pitchSortBtn').classList.remove('on');
   _renderCandList();
+}
+
+function buildSyllableCandList(w, i, syllables) {
+  _cands = [];
+  _candsWordIdx = i;
+  _pitchSort = false;
+  const list = document.getElementById('candList');
+  list.innerHTML = '';
+  if (!syllables.length) {
+    list.innerHTML = '<div class="cand-row" style="color:var(--muted)">not in pronunciation dictionary</div>';
+    return;
+  }
+  syllables.forEach(syll => {
+    const header = document.createElement('div');
+    header.className = 'syll-group-header';
+    header.textContent = `syllable ${syll.index + 1} · ${syll.phones}`;
+    list.appendChild(header);
+
+    if (!syll.candidates.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cand-row';
+      empty.style.color = 'var(--muted)';
+      empty.textContent = 'no candidates found';
+      list.appendChild(empty);
+      return;
+    }
+    const curId = w.syllables?.[syll.index]?.syllable_instance_id;
+    syll.candidates.forEach(c => {
+      const cur  = c.id === curId;
+      const conf = c.confidence != null ? Math.round(c.confidence * 100) + '%' : '—';
+      const f0   = c.f0_hz != null ? Math.round(c.f0_hz) + 'Hz' : '—';
+      const row  = document.createElement('div');
+      row.className = 'cand-row' + (cur ? ' cur' : '');
+      row.innerHTML = `
+        <span class="cand-conf">${conf}</span>
+        <span class="cand-speaker">${esc(c.parent_word)} · ${esc(c.speaker||'—')}</span>
+        <span class="cand-date">${esc(c.date||'—')}</span>
+        <span class="cand-dur">${c.duration_s}s</span>
+        <span class="cand-f0">${f0}</span>
+        <div class="cand-acts">
+          <button class="cand-btn" onclick="doPreviewSyllable(${c.id})">▶</button>
+          ${cur
+            ? '<button class="cand-btn" disabled>current</button>'
+            : `<button class="cand-btn use" onclick="doSwapSyllable(${i},${syll.index},${c.id})">use</button>`}
+        </div>`;
+      list.appendChild(row);
+    });
+  });
 }
 
 function closeCands() {
