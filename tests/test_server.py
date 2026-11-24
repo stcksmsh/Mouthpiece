@@ -65,14 +65,16 @@ def test_reroll_is_reproducible_for_same_seed():
 
 @pytest.mark.usefixtures("env")
 def test_reroll_order_across_words_does_not_matter():
-    ab, ba = _render(), _render()
-    for _ in range(10):
-        server.api_reroll(ab["id"], 0)
-        ab_r = server.api_reroll(ab["id"], 2)
-    for _ in range(10):
-        server.api_reroll(ba["id"], 2)
-        ba_r = server.api_reroll(ba["id"], 0)
-    assert _ids(ab_r) == _ids(ba_r)
+    def picks(order):
+        r = _render()
+        seq = {0: [], 2: []}
+        for _ in range(12):
+            for w in order:
+                seq[w].append(_ids(server.api_reroll(r["id"], w))[w])
+        return seq
+
+    # Each word's full pick sequence must match whichever word goes first.
+    assert picks((0, 2)) == picks((2, 0))
 
 
 @pytest.mark.usefixtures("env")
