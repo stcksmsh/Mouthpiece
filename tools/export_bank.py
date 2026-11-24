@@ -39,6 +39,13 @@ N_BIGRAMS = 500
 N_TRIGRAMS = 150
 PHONES_PER_KEY = 4
 EXCLUDE_SOURCES = {"10000lieuessansvouloir_2102_librivox.wav"}  # French reading, transcribed as English
+# Churchill's broadcasts are not cleared for publication; keep them out of the bank and the name out of cmu.txt.
+EXCLUDE_PATTERN = re.compile("churchill", re.I)
+
+
+def excluded(src):
+    return src["filename"] in EXCLUDE_SOURCES or any(
+        EXCLUDE_PATTERN.search(src[c] or "") for c in ("filename", "speaker", "event", "source_url"))
 
 
 def label(src):
@@ -112,7 +119,9 @@ class Sprites:
                 name = f"chunk-{i:03d}.ogg"
                 subprocess.run(
                     ["ffmpeg", "-loglevel", "error", "-y", "-i", str(wav), "-c:a", "libopus",
-                     "-b:a", "20k", "-application", "voip", str(self.out / name)],
+                     "-b:a", "20k", "-application", "voip",
+                     # bitexact: fixed Ogg serials and no encoder tag, so a rebuild is byte-identical
+                     "-fflags", "+bitexact", "-flags:a", "+bitexact", str(self.out / name)],
                     check=True,
                 )
                 names.append(name)
@@ -145,7 +154,9 @@ def main():
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row
     sources = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM sources")}
-    sources = {k: v for k, v in sources.items() if v["filename"] not in EXCLUDE_SOURCES}
+    dropped = sorted(k for k, v in sources.items() if excluded(v))
+    sources = {k: v for k, v in sources.items() if k not in dropped}
+    print(f"excluded {len(dropped)} sources: {dropped}")
     path_of = {k: str(Path(args.corpus) / v["filename"]) for k, v in sources.items()}
     used_sources = set()
     sp = Sprites(out)
@@ -255,7 +266,7 @@ def main():
     import cmudict
     lines = []
     for w, prons in cmudict.dict().items():
-        if re.fullmatch(r"[a-z][a-z']*", w):
+        if re.fullmatch(r"[a-z][a-z']*", w) and not EXCLUDE_PATTERN.search(w):
             lines.append(w + " " + " ".join(prons[0]))
     lines.sort()
     (out / "cmu.txt").write_text("\n".join(lines) + "\n")
