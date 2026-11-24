@@ -19,7 +19,11 @@ dependencies = [
     "pyrubberband",
     "cmudict",
     "nltk",
+    "python-multipart",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [project.scripts]
 mouthpiece = "mouthpiece.cli:main"

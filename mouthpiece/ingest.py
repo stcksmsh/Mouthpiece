@@ -132,7 +132,7 @@ def _ingest(
     model_size: str = "base",
     reindex: bool = False,
 ) -> int:
-    from . import index, transcribe
+    from . import index, phonemes, transcribe
 
     corpus_dir.mkdir(parents=True, exist_ok=True)
     dest = corpus_dir / (audio_path.stem + ".wav")
@@ -160,6 +160,16 @@ def _ingest(
         return source_id
 
     if existing > 0 and reindex:
+        conn.execute(
+            """DELETE FROM phone_instances WHERE word_instance_id IN
+                   (SELECT id FROM word_instances WHERE source_id=?)""",
+            (source_id,),
+        )
+        conn.execute(
+            """DELETE FROM syllable_instances WHERE word_instance_id IN
+                   (SELECT id FROM word_instances WHERE source_id=?)""",
+            (source_id,),
+        )
         conn.execute("DELETE FROM word_instances WHERE source_id=?", (source_id,))
         conn.commit()
         print(f"  Cleared {existing} existing word instances.")
@@ -169,6 +179,21 @@ def _ingest(
     words = _compute_prosodics(dest, words)
     print(f"  Inserting {len(words)} word instances ...")
     index.insert_word_instances(conn, source_id, words)
+
+    print(f"  Computing syllables and phones ...")
+    n_syll = n_phone = 0
+    for row in conn.execute(
+        "SELECT id, word, start_s, end_s FROM word_instances WHERE source_id=?", (source_id,)
+    ).fetchall():
+        rows = phonemes.compute_syllable_rows(row["word"], row["start_s"], row["end_s"])
+        if rows:
+            index.insert_syllable_instances(conn, row["id"], rows)
+            n_syll += len(rows)
+        prows = phonemes.compute_phone_rows(row["word"], row["start_s"], row["end_s"])
+        if prows:
+            index.insert_phone_instances(conn, row["id"], prows)
+            n_phone += len(prows)
+    print(f"  {n_syll} syllables, {n_phone} phones indexed.")
 
     print(f"  Done. {len(words)} words indexed from '{dest.name}'.")
     return source_id

@@ -1,5 +1,6 @@
 """SQLite schema, connection management, and low-level DB operations."""
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -53,6 +54,35 @@ CREATE TRIGGER IF NOT EXISTS wi_au AFTER UPDATE ON word_instances BEGIN
     INSERT INTO word_fts(word_fts, rowid, word, lemma) VALUES('delete', old.id, old.word, old.lemma);
     INSERT INTO word_fts(rowid, word, lemma) VALUES (new.id, new.word, new.lemma);
 END;
+
+CREATE TABLE IF NOT EXISTS syllable_instances (
+    id               INTEGER PRIMARY KEY,
+    word_instance_id INTEGER NOT NULL REFERENCES word_instances(id),
+    syll_index       INTEGER NOT NULL,
+    syll_count       INTEGER NOT NULL,
+    phones           TEXT NOT NULL,
+    phone_key        TEXT NOT NULL,
+    start_s          REAL NOT NULL,
+    end_s            REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_syll_key  ON syllable_instances(phone_key);
+CREATE INDEX IF NOT EXISTS idx_syll_word ON syllable_instances(word_instance_id);
+
+CREATE TABLE IF NOT EXISTS phone_instances (
+    id               INTEGER PRIMARY KEY,
+    word_instance_id INTEGER NOT NULL REFERENCES word_instances(id),
+    syll_index       INTEGER NOT NULL,
+    phone_index      INTEGER NOT NULL,
+    phone_count      INTEGER NOT NULL,
+    phone            TEXT NOT NULL,
+    phone_key        TEXT NOT NULL,
+    start_s          REAL NOT NULL,
+    end_s            REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_key  ON phone_instances(phone_key);
+CREATE INDEX IF NOT EXISTS idx_phone_word ON phone_instances(word_instance_id);
 """
 
 
@@ -86,6 +116,33 @@ def insert_source(
     return conn.execute("SELECT id FROM sources WHERE filename=?", (filename,)).fetchone()[0]
 
 
+_EDGE_PUNCT = re.compile(r"^[^\w']+|[^\w']+$")
+_QUOTED = re.compile(r"^'(.+)'$")
+
+
+def normalize_word(word: str) -> str:
+    """Lowercase and strip leading/trailing punctuation ('week,' -> 'week', 'mr.' -> 'mr').
+
+    WhisperX attaches punctuation to words, but lookups use clean tokens, so an
+    unstripped 'week,' can never match. Inner punctuation ('eye-to-eye') and
+    apostrophes stay, except a pair wrapping the whole token ("'hello'" -> 'hello');
+    one-sided ones ("'em", "goin'") are contractions. A word that is only punctuation
+    is kept as-is.
+    """
+    w = word.lower().strip()
+    w = _EDGE_PUNCT.sub("", w) or w
+    return _QUOTED.sub(r"\1", w)
+
+
+def normalize_stored_words(conn: sqlite3.Connection) -> int:
+    """Apply normalize_word() to every stored word instance. Returns rows changed."""
+    rows = conn.execute("SELECT id, word FROM word_instances").fetchall()
+    changes = [(normalize_word(r["word"]), r["id"]) for r in rows if normalize_word(r["word"]) != r["word"]]
+    conn.executemany("UPDATE word_instances SET word=? WHERE id=?", changes)
+    conn.commit()
+    return len(changes)
+
+
 def insert_word_instances(conn: sqlite3.Connection, source_id: int, words: list[dict]) -> None:
     conn.executemany(
         """INSERT INTO word_instances
@@ -95,7 +152,7 @@ def insert_word_instances(conn: sqlite3.Connection, source_id: int, words: list[
         [
             (
                 source_id,
-                w["word"].lower().strip(),
+                normalize_word(w["word"]),
                 w.get("lemma"),
                 w["start"],
                 w["end"],
@@ -134,6 +191,32 @@ def search_word(conn: sqlite3.Connection, word: str, limit: int = 20) -> list[di
     return [dict(r) for r in rows]
 
 
+def next_word_instance(
+    conn: sqlite3.Connection, word_instance_id: int, max_gap: float = 0.5
+) -> dict | None:
+    """The word instance immediately following `word_instance_id` in the same
+    source recording, within `max_gap` seconds — a proxy for 'spoken as part
+    of the same continuous utterance' (small negative slack allows for slight
+    timestamp overlap/rounding)."""
+    row = conn.execute(
+        """SELECT wi2.id, wi2.source_id, wi2.word, wi2.lemma, wi2.start_s, wi2.end_s,
+                  COALESCE(wi2.confidence, 0) AS confidence,
+                  wi2.diarization_speaker, wi2.f0_mean, wi2.f0_var, wi2.rms, wi2.spectral_tilt,
+                  s.filename, s.speaker, s.date, s.source_url
+           FROM word_instances wi1
+           JOIN word_instances wi2 ON wi2.source_id = wi1.source_id
+                  AND wi2.id != wi1.id
+                  AND wi2.start_s >= wi1.end_s - 0.05
+                  AND wi2.start_s - wi1.end_s <= ?
+           JOIN sources s ON wi2.source_id = s.id
+           WHERE wi1.id = ?
+           ORDER BY wi2.start_s ASC
+           LIMIT 1""",
+        (max_gap, word_instance_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def search_word_by_pitch(
     conn: sqlite3.Connection, word: str, target_f0: float, limit: int = 20
 ) -> list[dict]:
@@ -165,6 +248,130 @@ def get_word_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None
         (instance_id,),
     ).fetchone()
     return dict(row) if row else None
+
+
+# Sub-word unit tables. Syllables and phones share one query shape; only these
+# column lists differ. Names come from this fixed dict, never from callers.
+_UNITS = {
+    "syllable": {
+        "table": "syllable_instances",
+        "cols":  ["syll_index", "syll_count", "phones", "phone_key", "start_s", "end_s"],
+        "pos":   "syll_index",
+        "count": "syll_count",
+    },
+    "phone": {
+        "table": "phone_instances",
+        "cols":  ["syll_index", "phone_index", "phone_count", "phone", "phone_key", "start_s", "end_s"],
+        "pos":   "phone_index",
+        "count": "phone_count",
+    },
+}
+
+
+def _unit_select(kind: str) -> str:
+    u = _UNITS[kind]
+    cols = ", ".join(f"u.{c}" for c in u["cols"])
+    return f"""SELECT u.id, u.word_instance_id, {cols},
+                      wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
+                      wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
+                      s.filename, s.speaker, s.date, s.source_url
+               FROM {u["table"]} u
+               JOIN word_instances wi ON u.word_instance_id = wi.id
+               JOIN sources s ON wi.source_id = s.id"""
+
+
+def _unit_one(conn: sqlite3.Connection, kind: str, where: str, params: tuple) -> dict | None:
+    row = conn.execute(f"{_unit_select(kind)} WHERE {where}", params).fetchone()
+    return dict(row) if row else None
+
+
+def _insert_units(conn: sqlite3.Connection, kind: str, word_instance_id: int, rows: list[dict]) -> None:
+    u = _UNITS[kind]
+    cols = ["word_instance_id", *u["cols"]]
+    conn.executemany(
+        f"INSERT INTO {u['table']} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+        [(word_instance_id, *(r[c] for c in u["cols"])) for r in rows],
+    )
+    conn.commit()
+
+
+def _next_unit(conn: sqlite3.Connection, kind: str, unit_id: int, max_gap: float) -> dict | None:
+    """The unit right after `unit_id` in the same recording: the next unit of the same
+    word, or the first unit of the following word (via next_word_instance). None if
+    speech does not continue or the next word has no units (not in CMUdict)."""
+    u = _UNITS[kind]
+    cur = conn.execute(
+        f"SELECT word_instance_id, {u['pos']} AS pos, {u['count']} AS n FROM {u['table']} WHERE id=?",
+        (unit_id,),
+    ).fetchone()
+    if cur is None:
+        return None
+    if cur["pos"] < cur["n"] - 1:
+        return _unit_one(conn, kind, f"u.word_instance_id = ? AND u.{u['pos']} = ?",
+                         (cur["word_instance_id"], cur["pos"] + 1))
+    nxt_word = next_word_instance(conn, cur["word_instance_id"], max_gap=max_gap)
+    if nxt_word is None:
+        return None
+    return _unit_one(conn, kind, f"u.word_instance_id = ? AND u.{u['pos']} = 0", (nxt_word["id"],))
+
+
+def _search_units(conn: sqlite3.Connection, kind: str, phone_key: str, limit: int) -> list[dict]:
+    rows = conn.execute(
+        f"{_unit_select(kind)} WHERE u.phone_key = ? ORDER BY wi.confidence DESC LIMIT ?",
+        (phone_key, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_syllable_instances(conn: sqlite3.Connection, word_instance_id: int, syllables: list[dict]) -> None:
+    """syllables: list of {syll_index, syll_count, phones, phone_key, start_s, end_s}."""
+    _insert_units(conn, "syllable", word_instance_id, syllables)
+
+
+def insert_phone_instances(conn: sqlite3.Connection, word_instance_id: int, phones: list[dict]) -> None:
+    """phones: list of {syll_index, phone_index, phone_count, phone, phone_key, start_s, end_s}."""
+    _insert_units(conn, "phone", word_instance_id, phones)
+
+
+def next_syllable_instance(conn: sqlite3.Connection, syllable_instance_id: int, max_gap: float = 0.5) -> dict | None:
+    return _next_unit(conn, "syllable", syllable_instance_id, max_gap)
+
+
+def next_phone_instance(conn: sqlite3.Connection, phone_instance_id: int, max_gap: float = 0.5) -> dict | None:
+    return _next_unit(conn, "phone", phone_instance_id, max_gap)
+
+
+def search_syllable(conn: sqlite3.Connection, phone_key: str, limit: int = 20) -> list[dict]:
+    """Candidate syllable instances for a phone_key, ordered by parent word's confidence."""
+    return _search_units(conn, "syllable", phone_key, limit)
+
+
+def search_phone(conn: sqlite3.Connection, phone_key: str, limit: int = 20) -> list[dict]:
+    """Candidate phone instances for a phone_key, ordered by parent word's confidence."""
+    return _search_units(conn, "phone", phone_key, limit)
+
+
+def get_syllable_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None:
+    return _unit_one(conn, "syllable", "u.id = ?", (instance_id,))
+
+
+def get_phone_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None:
+    return _unit_one(conn, "phone", "u.id = ?", (instance_id,))
+
+
+def all_word_instances(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("SELECT id, word, start_s, end_s FROM word_instances").fetchall()
+    return [dict(r) for r in rows]
+
+
+def word_instances_missing_units(conn: sqlite3.Connection, kind: str) -> list[dict]:
+    """Word instances with no rows in the `kind` ("syllable" or "phone") table."""
+    table = _UNITS[kind]["table"]
+    rows = conn.execute(
+        f"""SELECT id, word, start_s, end_s FROM word_instances
+            WHERE id NOT IN (SELECT DISTINCT word_instance_id FROM {table})"""
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def list_sources(conn: sqlite3.Connection) -> list[dict]:
