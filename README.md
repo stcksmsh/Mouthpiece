@@ -26,4 +26,6 @@ branch: it shares no history with `master` and holds only the site.
   It cuts the 3,000 most frequent words, 650 phrases, one clip per syllable shape and four per
   phone into ~45 s Opus sprites (`chunk-NNN.ogg`, fetched only when a render needs them), plus
   `index.json` and `cmu.txt`. Re-run it after re-indexing the corpus. The French LibriVox
-  reading is excluded (it was transcribed as English).
+  reading is excluded (it was transcribed as English), and so is any source whose filename,
+  speaker, event or URL mentions Churchill (not cleared for publication). Output is
+  byte-identical across runs.

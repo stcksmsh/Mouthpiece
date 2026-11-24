@@ -20056,8 +20056,6 @@ churchgoer CH ER1 CH G OW2 ER0
 churchgoers CH ER1 CH G OW2 ER0 Z
 churchgoing CH ER1 CH G OW2 IH0 NG
 churchhouse CH ER1 CH HH AW2 S
-churchill CH ER1 CH IH0 L
-churchill's CH ER1 CH IH0 L Z
 churchman CH ER1 CH M AH0 N
 churchmen CH ER1 CH M AH0 N
 churchwell CH ER1 CH W EH2 L
