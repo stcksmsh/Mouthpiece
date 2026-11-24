@@ -19,6 +19,7 @@ dependencies = [
     "pyrubberband",
     "cmudict",
     "nltk",
+    "python-multipart",
 ]
 
 [project.scripts]
