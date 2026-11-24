@@ -36,17 +36,16 @@ def save_reference_temp(audio_bytes: bytes, dest_dir: Path, name: str = "referen
 def analyze_reference_audio(audio_path: Path, model_size: str = "tiny") -> list[dict]:
     """Transcribe + compute per-word f0/rms for a reference recording.
     Uses librosa.pyin (more robust than yin on clean, close-mic'd speech)."""
-    from . import ingest, transcribe
+    import librosa
+    import numpy as np
+    import soundfile as sf
+
+    from . import transcribe
 
     words = transcribe.transcribe_audio(audio_path, model_size=model_size)
-
-    try:
-        import soundfile as sf
-        import librosa
-        import numpy as np
-        audio, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
-    except Exception:
-        return [{**w, "f0_mean": None, "rms": None} for w in words]
+    # The file is ffmpeg's own WAV output (save_reference_temp), so a read failure is
+    # a real error and surfaces to the caller instead of silently dropping pitch.
+    audio, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
 
     enriched = []
     for w in words:
@@ -65,7 +64,8 @@ def analyze_reference_audio(audio_path: Path, model_size: str = "tiny") -> list[
             voiced = f0[voiced_flag] if voiced_flag is not None else f0[~np.isnan(f0)]
             voiced = voiced[~np.isnan(voiced)]
             f0_mean = float(np.median(voiced)) if len(voiced) else None
-        except Exception:
+        except (ValueError, librosa.util.exceptions.ParameterError):
+            # pyin rejects some clip/frame length combinations; that word just gets no pitch.
             f0_mean = None
         enriched.append({**w, "f0_mean": f0_mean, "rms": rms})
 

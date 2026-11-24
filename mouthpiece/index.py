@@ -246,225 +246,113 @@ def get_word_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None
     return dict(row) if row else None
 
 
-def insert_syllable_instances(conn: sqlite3.Connection, word_instance_id: int, syllables: list[dict]) -> None:
-    """syllables: list of {syll_index, syll_count, phones, phone_key, start_s, end_s}."""
+# Sub-word unit tables. Syllables and phones share one query shape; only these
+# column lists differ. Names come from this fixed dict, never from callers.
+_UNITS = {
+    "syllable": {
+        "table": "syllable_instances",
+        "cols":  ["syll_index", "syll_count", "phones", "phone_key", "start_s", "end_s"],
+        "pos":   "syll_index",
+        "count": "syll_count",
+    },
+    "phone": {
+        "table": "phone_instances",
+        "cols":  ["syll_index", "phone_index", "phone_count", "phone", "phone_key", "start_s", "end_s"],
+        "pos":   "phone_index",
+        "count": "phone_count",
+    },
+}
+
+
+def _unit_select(kind: str) -> str:
+    u = _UNITS[kind]
+    cols = ", ".join(f"u.{c}" for c in u["cols"])
+    return f"""SELECT u.id, u.word_instance_id, {cols},
+                      wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
+                      wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
+                      s.filename, s.speaker, s.date, s.source_url
+               FROM {u["table"]} u
+               JOIN word_instances wi ON u.word_instance_id = wi.id
+               JOIN sources s ON wi.source_id = s.id"""
+
+
+def _unit_one(conn: sqlite3.Connection, kind: str, where: str, params: tuple) -> dict | None:
+    row = conn.execute(f"{_unit_select(kind)} WHERE {where}", params).fetchone()
+    return dict(row) if row else None
+
+
+def _insert_units(conn: sqlite3.Connection, kind: str, word_instance_id: int, rows: list[dict]) -> None:
+    u = _UNITS[kind]
+    cols = ["word_instance_id", *u["cols"]]
     conn.executemany(
-        """INSERT INTO syllable_instances
-               (word_instance_id, syll_index, syll_count, phones, phone_key, start_s, end_s)
-           VALUES (?,?,?,?,?,?,?)""",
-        [
-            (
-                word_instance_id,
-                s["syll_index"],
-                s["syll_count"],
-                s["phones"],
-                s["phone_key"],
-                s["start_s"],
-                s["end_s"],
-            )
-            for s in syllables
-        ],
+        f"INSERT INTO {u['table']} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+        [(word_instance_id, *(r[c] for c in u["cols"])) for r in rows],
     )
     conn.commit()
 
 
-def delete_syllables_for_word(conn: sqlite3.Connection, word_instance_id: int) -> None:
-    conn.execute("DELETE FROM syllable_instances WHERE word_instance_id=?", (word_instance_id,))
-    conn.commit()
-
-
-def next_syllable_instance(
-    conn: sqlite3.Connection, syllable_instance_id: int, max_gap: float = 0.5
-) -> dict | None:
-    """The syllable instance immediately following `syllable_instance_id` in the
-    same source recording — either the next syllable within the same parent
-    word, or (if it's that word's last syllable) the first syllable of
-    whatever word comes next via next_word_instance(). Returns None if the
-    word doesn't continue, or the next word has no syllable rows (OOV)."""
+def _next_unit(conn: sqlite3.Connection, kind: str, unit_id: int, max_gap: float) -> dict | None:
+    """The unit right after `unit_id` in the same recording: the next unit of the same
+    word, or the first unit of the following word (via next_word_instance). None if
+    speech does not continue or the next word has no units (not in CMUdict)."""
+    u = _UNITS[kind]
     cur = conn.execute(
-        "SELECT word_instance_id, syll_index, syll_count FROM syllable_instances WHERE id=?",
-        (syllable_instance_id,),
+        f"SELECT word_instance_id, {u['pos']} AS pos, {u['count']} AS n FROM {u['table']} WHERE id=?",
+        (unit_id,),
     ).fetchone()
     if cur is None:
         return None
-
-    if cur["syll_index"] < cur["syll_count"] - 1:
-        row = conn.execute(
-            """SELECT si.id, si.word_instance_id, si.syll_index, si.syll_count,
-                      si.phones, si.phone_key, si.start_s, si.end_s,
-                      wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                      wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                      s.filename, s.speaker, s.date, s.source_url
-               FROM syllable_instances si
-               JOIN word_instances wi ON si.word_instance_id = wi.id
-               JOIN sources s ON wi.source_id = s.id
-               WHERE si.word_instance_id = ? AND si.syll_index = ?""",
-            (cur["word_instance_id"], cur["syll_index"] + 1),
-        ).fetchone()
-        return dict(row) if row else None
-
+    if cur["pos"] < cur["n"] - 1:
+        return _unit_one(conn, kind, f"u.word_instance_id = ? AND u.{u['pos']} = ?",
+                         (cur["word_instance_id"], cur["pos"] + 1))
     nxt_word = next_word_instance(conn, cur["word_instance_id"], max_gap=max_gap)
     if nxt_word is None:
         return None
-    row = conn.execute(
-        """SELECT si.id, si.word_instance_id, si.syll_index, si.syll_count,
-                  si.phones, si.phone_key, si.start_s, si.end_s,
-                  wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                  wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
-           FROM syllable_instances si
-           JOIN word_instances wi ON si.word_instance_id = wi.id
-           JOIN sources s ON wi.source_id = s.id
-           WHERE si.word_instance_id = ? AND si.syll_index = 0""",
-        (nxt_word["id"],),
-    ).fetchone()
-    return dict(row) if row else None
+    return _unit_one(conn, kind, f"u.word_instance_id = ? AND u.{u['pos']} = 0", (nxt_word["id"],))
 
 
-def search_syllable(conn: sqlite3.Connection, phone_key: str, limit: int = 20) -> list[dict]:
-    """Candidate syllable instances for a phone_key, ordered by parent word's confidence."""
+def _search_units(conn: sqlite3.Connection, kind: str, phone_key: str, limit: int) -> list[dict]:
     rows = conn.execute(
-        """SELECT si.id, si.word_instance_id, si.syll_index, si.syll_count,
-                  si.phones, si.phone_key, si.start_s, si.end_s,
-                  wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                  wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
-           FROM syllable_instances si
-           JOIN word_instances wi ON si.word_instance_id = wi.id
-           JOIN sources s ON wi.source_id = s.id
-           WHERE si.phone_key = ?
-           ORDER BY wi.confidence DESC
-           LIMIT ?""",
+        f"{_unit_select(kind)} WHERE u.phone_key = ? ORDER BY wi.confidence DESC LIMIT ?",
         (phone_key, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_syllable_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None:
-    row = conn.execute(
-        """SELECT si.id, si.word_instance_id, si.syll_index, si.syll_count,
-                  si.phones, si.phone_key, si.start_s, si.end_s,
-                  wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                  wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
-           FROM syllable_instances si
-           JOIN word_instances wi ON si.word_instance_id = wi.id
-           JOIN sources s ON wi.source_id = s.id
-           WHERE si.id = ?""",
-        (instance_id,),
-    ).fetchone()
-    return dict(row) if row else None
+def insert_syllable_instances(conn: sqlite3.Connection, word_instance_id: int, syllables: list[dict]) -> None:
+    """syllables: list of {syll_index, syll_count, phones, phone_key, start_s, end_s}."""
+    _insert_units(conn, "syllable", word_instance_id, syllables)
 
 
 def insert_phone_instances(conn: sqlite3.Connection, word_instance_id: int, phones: list[dict]) -> None:
     """phones: list of {syll_index, phone_index, phone_count, phone, phone_key, start_s, end_s}."""
-    conn.executemany(
-        """INSERT INTO phone_instances
-               (word_instance_id, syll_index, phone_index, phone_count, phone, phone_key, start_s, end_s)
-           VALUES (?,?,?,?,?,?,?,?)""",
-        [
-            (
-                word_instance_id,
-                p["syll_index"],
-                p["phone_index"],
-                p["phone_count"],
-                p["phone"],
-                p["phone_key"],
-                p["start_s"],
-                p["end_s"],
-            )
-            for p in phones
-        ],
-    )
-    conn.commit()
+    _insert_units(conn, "phone", word_instance_id, phones)
 
 
-def delete_phones_for_word(conn: sqlite3.Connection, word_instance_id: int) -> None:
-    conn.execute("DELETE FROM phone_instances WHERE word_instance_id=?", (word_instance_id,))
-    conn.commit()
+def next_syllable_instance(conn: sqlite3.Connection, syllable_instance_id: int, max_gap: float = 0.5) -> dict | None:
+    return _next_unit(conn, "syllable", syllable_instance_id, max_gap)
 
 
-def next_phone_instance(
-    conn: sqlite3.Connection, phone_instance_id: int, max_gap: float = 0.5
-) -> dict | None:
-    """The phone instance immediately following `phone_instance_id` in the
-    same source recording — either the next phone within the same parent
-    word, or (if it's that word's last phone) the first phone of whatever
-    word comes next via next_word_instance(). Returns None if the word
-    doesn't continue, or the next word has no phone rows (OOV)."""
-    cur = conn.execute(
-        "SELECT word_instance_id, phone_index, phone_count FROM phone_instances WHERE id=?",
-        (phone_instance_id,),
-    ).fetchone()
-    if cur is None:
-        return None
+def next_phone_instance(conn: sqlite3.Connection, phone_instance_id: int, max_gap: float = 0.5) -> dict | None:
+    return _next_unit(conn, "phone", phone_instance_id, max_gap)
 
-    if cur["phone_index"] < cur["phone_count"] - 1:
-        row = conn.execute(
-            """SELECT pi.id, pi.word_instance_id, pi.syll_index, pi.phone_index, pi.phone_count,
-                      pi.phone, pi.phone_key, pi.start_s, pi.end_s,
-                      wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                      wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                      s.filename, s.speaker, s.date, s.source_url
-               FROM phone_instances pi
-               JOIN word_instances wi ON pi.word_instance_id = wi.id
-               JOIN sources s ON wi.source_id = s.id
-               WHERE pi.word_instance_id = ? AND pi.phone_index = ?""",
-            (cur["word_instance_id"], cur["phone_index"] + 1),
-        ).fetchone()
-        return dict(row) if row else None
 
-    nxt_word = next_word_instance(conn, cur["word_instance_id"], max_gap=max_gap)
-    if nxt_word is None:
-        return None
-    row = conn.execute(
-        """SELECT pi.id, pi.word_instance_id, pi.syll_index, pi.phone_index, pi.phone_count,
-                  pi.phone, pi.phone_key, pi.start_s, pi.end_s,
-                  wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                  wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
-           FROM phone_instances pi
-           JOIN word_instances wi ON pi.word_instance_id = wi.id
-           JOIN sources s ON wi.source_id = s.id
-           WHERE pi.word_instance_id = ? AND pi.phone_index = 0""",
-        (nxt_word["id"],),
-    ).fetchone()
-    return dict(row) if row else None
+def search_syllable(conn: sqlite3.Connection, phone_key: str, limit: int = 20) -> list[dict]:
+    """Candidate syllable instances for a phone_key, ordered by parent word's confidence."""
+    return _search_units(conn, "syllable", phone_key, limit)
 
 
 def search_phone(conn: sqlite3.Connection, phone_key: str, limit: int = 20) -> list[dict]:
     """Candidate phone instances for a phone_key, ordered by parent word's confidence."""
-    rows = conn.execute(
-        """SELECT pi.id, pi.word_instance_id, pi.syll_index, pi.phone_index, pi.phone_count,
-                  pi.phone, pi.phone_key, pi.start_s, pi.end_s,
-                  wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                  wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
-           FROM phone_instances pi
-           JOIN word_instances wi ON pi.word_instance_id = wi.id
-           JOIN sources s ON wi.source_id = s.id
-           WHERE pi.phone_key = ?
-           ORDER BY wi.confidence DESC
-           LIMIT ?""",
-        (phone_key, limit),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _search_units(conn, "phone", phone_key, limit)
+
+
+def get_syllable_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None:
+    return _unit_one(conn, "syllable", "u.id = ?", (instance_id,))
 
 
 def get_phone_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None:
-    row = conn.execute(
-        """SELECT pi.id, pi.word_instance_id, pi.syll_index, pi.phone_index, pi.phone_count,
-                  pi.phone, pi.phone_key, pi.start_s, pi.end_s,
-                  wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
-                  wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
-           FROM phone_instances pi
-           JOIN word_instances wi ON pi.word_instance_id = wi.id
-           JOIN sources s ON wi.source_id = s.id
-           WHERE pi.id = ?""",
-        (instance_id,),
-    ).fetchone()
-    return dict(row) if row else None
+    return _unit_one(conn, "phone", "u.id = ?", (instance_id,))
 
 
 def all_word_instances(conn: sqlite3.Connection) -> list[dict]:
