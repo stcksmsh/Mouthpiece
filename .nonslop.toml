@@ -1,0 +1,46 @@
+# MOUTHPIECE wiring. No CI, no test suite, no linter in the repo yet (2026-11-24).
+# The only gate is a stdlib byte-compile of the package, which needs no venv or heavy deps.
+
+[commands]
+lint = "python3 -m compileall -q mouthpiece"
+test = ""
+clean = ""
+
+[slop]
+
+[done]
+branch_prefix = "claude/"
+require = ["clean_tree", "pushed", "pr"]
+# No CI, so the compile check runs here before a slice may end.
+run = ["lint"]
+gate_timeout_s = 1800
+auto_clean = false
+min_free_gb = 0
+stop_retries = 2
+
+[verify]
+run = []
+
+[merge]
+guard = true
+require = ["verify", "review", "ci"]
+allow_no_ci = false
+coordinator = "ask"
+
+[guard]
+secret_read = true
+
+[state]
+file = "docs/STATE.md"
+
+[env]
+scratch = ".claude/tmp"
+
+[rules]
+notes = [
+  "Caveman and Ponytail run at full in this project, from the first message.",
+  "No test suite or CI exists. Verify behaviour by running the CLI or server against a small local corpus and say how you checked.",
+  "torch and whisperx are heavy and installed by hand in .venv; never pip install into the system Python.",
+  "corpus/ audio, db/ and renders/ are local data and git-ignored. Never commit or delete them.",
+  "Render output is 44100 Hz. pyrubberband rate equals speed (>1 is faster); do not invert it.",
+]
