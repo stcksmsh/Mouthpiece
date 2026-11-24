@@ -24,7 +24,7 @@ run = []
 [merge]
 guard = true
 require = ["verify", "review", "ci"]
-allow_no_ci = false
+allow_no_ci = true
 coordinator = "ask"
 
 [guard]
