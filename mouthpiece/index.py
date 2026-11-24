@@ -93,7 +93,63 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    _migrate_sources(conn)
     return conn
+
+
+# Attribution columns added after the first schema. They are added in place on
+# open so existing DBs keep their rows; old rows read NULL.
+_ADDED_SOURCE_COLS = ("author", "reader", "uploader", "source_label", "licence_url", "lang")
+
+# Source metadata keys accepted from ingest (JSON / CSV); other keys are ignored.
+SOURCE_FIELDS = ("speaker", "date", "event", "source_url", "license", *_ADDED_SOURCE_COLS)
+
+# Attribution carried on every clip row and into render manifests.
+ATTRIBUTION_FIELDS = (
+    "speaker", "author", "reader", "uploader", "source_label", "license", "licence_url", "lang",
+)
+
+
+def _migrate_sources(conn: sqlite3.Connection) -> None:
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(sources)")}
+    for col in _ADDED_SOURCE_COLS:
+        if col not in have:
+            conn.execute(f"ALTER TABLE sources ADD COLUMN {col} TEXT")
+    conn.commit()
+
+
+def speaker_label(row: dict) -> str:
+    """The one speaker string shown to users.
+
+    Legacy rows sometimes hold an uploader's email in `speaker`; that names no
+    speaker, so it is treated as unset and never shown.
+    """
+    speaker = row.get("speaker")
+    if speaker and "@" not in speaker:
+        return speaker
+    parts = ["unidentified speaker"]
+    parts += [v for k in ("source_label", "date") if (v := row.get(k)) and "@" not in v]
+    return ", ".join(parts)
+
+
+def attribution(row: dict) -> dict:
+    """A clip row's attribution fields plus its display label."""
+    out = {k: row.get(k) for k in ATTRIBUTION_FIELDS}
+    out["speaker_label"] = speaker_label(row)
+    return out
+
+
+def stitched_attribution(rows: list[dict]) -> dict:
+    """Attribution for a word stitched from several clips.
+
+    Speakers and labels are joined over all clips; the other fields come from
+    the first clip (each clip also carries its own attribution).
+    """
+    out = attribution(rows[0])
+    speakers = list(dict.fromkeys(r["speaker"] for r in rows if r.get("speaker")))
+    out["speaker"] = ", ".join(speakers) or None
+    out["speaker_label"] = ", ".join(dict.fromkeys(speaker_label(r) for r in rows))
+    return out
 
 
 def insert_source(
@@ -104,11 +160,19 @@ def insert_source(
     event: str | None = None,
     source_url: str | None = None,
     license: str | None = None,
+    author: str | None = None,
+    reader: str | None = None,
+    uploader: str | None = None,
+    source_label: str | None = None,
+    licence_url: str | None = None,
+    lang: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT OR IGNORE INTO sources (filename, speaker, date, event, source_url, license)"
-        " VALUES (?,?,?,?,?,?)",
-        (filename, speaker, date, event, source_url, license),
+        "INSERT OR IGNORE INTO sources (filename, speaker, date, event, source_url, license,"
+        " author, reader, uploader, source_label, licence_url, lang)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (filename, speaker, date, event, source_url, license,
+         author, reader, uploader, source_label, licence_url, lang),
     )
     conn.commit()
     if cur.lastrowid:
@@ -180,7 +244,9 @@ def search_word(conn: sqlite3.Connection, word: str, limit: int = 20) -> list[di
         """SELECT wi.id, wi.source_id, wi.word, wi.lemma, wi.start_s, wi.end_s,
                   COALESCE(wi.confidence, 0) AS confidence,
                   wi.diarization_speaker, wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
+                  s.filename, s.date, s.source_url,
+                  s.speaker, s.author, s.reader, s.uploader, s.source_label,
+                  s.license, s.licence_url, s.lang
            FROM word_instances wi
            JOIN sources s ON wi.source_id = s.id
            WHERE wi.word = ?
@@ -202,7 +268,9 @@ def next_word_instance(
         """SELECT wi2.id, wi2.source_id, wi2.word, wi2.lemma, wi2.start_s, wi2.end_s,
                   COALESCE(wi2.confidence, 0) AS confidence,
                   wi2.diarization_speaker, wi2.f0_mean, wi2.f0_var, wi2.rms, wi2.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
+                  s.filename, s.date, s.source_url,
+                  s.speaker, s.author, s.reader, s.uploader, s.source_label,
+                  s.license, s.licence_url, s.lang
            FROM word_instances wi1
            JOIN word_instances wi2 ON wi2.source_id = wi1.source_id
                   AND wi2.id != wi1.id
@@ -225,7 +293,9 @@ def search_word_by_pitch(
         """SELECT wi.id, wi.source_id, wi.word, wi.lemma, wi.start_s, wi.end_s,
                   COALESCE(wi.confidence, 0) AS confidence,
                   wi.diarization_speaker, wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
+                  s.filename, s.date, s.source_url,
+                  s.speaker, s.author, s.reader, s.uploader, s.source_label,
+                  s.license, s.licence_url, s.lang
            FROM word_instances wi
            JOIN sources s ON wi.source_id = s.id
            WHERE wi.word = ? AND wi.f0_mean IS NOT NULL
@@ -241,7 +311,9 @@ def get_word_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None
         """SELECT wi.id, wi.source_id, wi.word, wi.lemma, wi.start_s, wi.end_s,
                   COALESCE(wi.confidence, 0) AS confidence,
                   wi.diarization_speaker, wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                  s.filename, s.speaker, s.date, s.source_url
+                  s.filename, s.date, s.source_url,
+                  s.speaker, s.author, s.reader, s.uploader, s.source_label,
+                  s.license, s.licence_url, s.lang
            FROM word_instances wi
            JOIN sources s ON wi.source_id = s.id
            WHERE wi.id = ?""",
@@ -274,7 +346,9 @@ def _unit_select(kind: str) -> str:
     return f"""SELECT u.id, u.word_instance_id, {cols},
                       wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
                       wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
-                      s.filename, s.speaker, s.date, s.source_url
+                      s.filename, s.date, s.source_url,
+                      s.speaker, s.author, s.reader, s.uploader, s.source_label,
+                      s.license, s.licence_url, s.lang
                FROM {u["table"]} u
                JOIN word_instances wi ON u.word_instance_id = wi.id
                JOIN sources s ON wi.source_id = s.id"""
@@ -376,7 +450,7 @@ def word_instances_missing_units(conn: sqlite3.Connection, kind: str) -> list[di
 
 def list_sources(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        """SELECT s.id, s.filename, s.speaker, s.date, s.event,
+        """SELECT s.id, s.filename, s.speaker, s.source_label, s.date, s.event,
                   COUNT(wi.id) AS word_count
            FROM sources s
            LEFT JOIN word_instances wi ON wi.source_id = s.id

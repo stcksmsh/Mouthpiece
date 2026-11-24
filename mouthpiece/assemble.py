@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from . import index
+
 SAMPLE_RATE = 16_000      # internal / corpus rate (WhisperX requires 16 kHz)
 OUTPUT_RATE = 44_100      # output WAV rate (standard for DAWs)
 CLIP_PAD    = 0.04        # 40 ms handle each side of word timestamp
@@ -271,7 +273,7 @@ def assemble(
                     ],
                     "word_instance_id": row0["id"],
                     "source_file":      row0["filename"],
-                    "speaker":          row0.get("speaker"),
+                    **index.attribution(row0),
                     "date":             row0.get("date"),
                     "source_url":       row0.get("source_url"),
                     "start_s":          round(row0["start_s"], 4),
@@ -303,8 +305,6 @@ def assemble(
             total_dur = sum(durations)
             f0_pairs  = [(r["f0_mean"], d) for r, d in zip(row, durations) if r.get("f0_mean")]
             f0_hz     = (sum(f * d for f, d in f0_pairs) / sum(d for _, d in f0_pairs)) if f0_pairs else None
-            speakers  = list(dict.fromkeys(r.get("speaker") or "unknown" for r in row))
-
             manifest_words.append(
                 {
                     "token":       token,
@@ -317,7 +317,7 @@ def assemble(
                             "parent_word":          r["parent_word"],
                             "syllable_instance_id": r["id"],
                             "source_file":          r["filename"],
-                            "speaker":              r.get("speaker"),
+                            **index.attribution(r),
                             "date":                 r.get("date"),
                             "start_s":              round(r["start_s"], 4),
                             "end_s":                round(r["end_s"], 4),
@@ -325,7 +325,7 @@ def assemble(
                         }
                         for r in row
                     ],
-                    "speaker":    ", ".join(speakers),
+                    **index.stitched_attribution(row),
                     "date":       row[0].get("date"),
                     "source_url": row[0].get("source_url"),
                     "confidence": min((r.get("confidence") or 0.0) for r in row),
@@ -351,7 +351,7 @@ def assemble(
                     "word_instance_id": row["id"],
                     "word":             row["word"],
                     "source_file":      row["filename"],
-                    "speaker":          row["speaker"],
+                    **index.attribution(row),
                     "date":             row["date"],
                     "source_url":       row["source_url"],
                     "start_s":          round(row["start_s"], 4),

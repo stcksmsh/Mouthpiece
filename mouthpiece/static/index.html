@@ -1159,9 +1159,9 @@ function makeTile(w, i) {
   if (w.found) {
     const line1 = w.stitched
       ? `${w.syllables.length} syllable${w.syllables.length===1?'':'s'} · stitched`
-      : truncate(w.speaker || '—', 18);
+      : truncate(w.speaker_label, 18);
     const line2 = w.stitched
-      ? truncate(w.speaker || '—', 22)
+      ? truncate(w.speaker_label, 22)
       : (w.date || '—');
     d.innerHTML = `
       <div class="t-word">${esc(w.token)}</div>
@@ -1248,7 +1248,7 @@ function _renderCandList() {
     row.className = 'cand-row' + (cur ? ' cur' : '');
     row.innerHTML = `
       <span class="cand-conf">${conf}</span>
-      <span class="cand-speaker">${esc(c.speaker||'—')}</span>
+      <span class="cand-speaker">${esc(c.speaker_label)}</span>
       <span class="cand-date">${esc(c.date||'—')}</span>
       <span class="cand-dur">${c.duration_s}s</span>
       <span class="cand-f0">${f0}</span>
@@ -1303,7 +1303,7 @@ function buildSyllableCandList(w, i, syllables) {
       row.className = 'cand-row' + (cur ? ' cur' : '');
       row.innerHTML = `
         <span class="cand-conf">${conf}</span>
-        <span class="cand-speaker">${esc(c.parent_word)} · ${esc(c.speaker||'—')}</span>
+        <span class="cand-speaker">${esc(c.parent_word)} · ${esc(c.speaker_label)}</span>
         <span class="cand-date">${esc(c.date||'—')}</span>
         <span class="cand-dur">${c.duration_s}s</span>
         <span class="cand-f0">${f0}</span>

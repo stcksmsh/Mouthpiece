@@ -86,3 +86,14 @@ def test_failed_reroll_does_not_advance_sequence():
             server.api_reroll(r["id"], 1)
     got = [_ids(server.api_reroll(r["id"], 0)) for _ in range(10)]
     assert got == [_ids(server.api_reroll(ref["id"], 0)) for _ in range(10)]
+
+
+@pytest.mark.usefixtures("env")
+def test_render_response_and_reaper_export_use_display_label(tmp_path):
+    r = server.api_render(server.RenderRequest(text="deliver my final address", seed=5))
+    assert [w["speaker_label"] for w in r["words"]] == ["Barack Obama"] * 4
+    script = server._make_reaper_script(server._renders[r["id"]], tmp_path / "x.wav")
+    assert script.count('speaker="Barack Obama"') == 4
+    cands = server.api_candidates("address")
+    assert cands
+    assert all(c["speaker_label"] == "Barack Obama" for c in cands)
