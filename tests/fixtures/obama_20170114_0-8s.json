@@ -1,0 +1,150 @@
+{
+ "source": {
+  "filename": "obama_20170114_0-8s.wav",
+  "speaker": "Barack Obama",
+  "date": "2017-01-14",
+  "event": "Weekly Address (first 8 s)",
+  "source_url": "https://obamawhitehouse.archives.gov/videos/2017/January/20170114_Weekly_Address.mp3",
+  "license": "public domain (US federal government work)"
+ },
+ "words": [
+  {
+   "word": "this",
+   "start": 0.642,
+   "end": 0.822,
+   "confidence": 0.743
+  },
+  {
+   "word": "week,",
+   "start": 0.902,
+   "end": 1.142,
+   "confidence": 0.957
+  },
+  {
+   "word": "i",
+   "start": 1.402,
+   "end": 1.463,
+   "confidence": 0.986
+  },
+  {
+   "word": "traveled",
+   "start": 1.523,
+   "end": 1.843,
+   "confidence": 0.72
+  },
+  {
+   "word": "to",
+   "start": 1.883,
+   "end": 1.943,
+   "confidence": 0.68
+  },
+  {
+   "word": "chicago",
+   "start": 1.963,
+   "end": 2.443,
+   "confidence": 0.815
+  },
+  {
+   "word": "to",
+   "start": 2.783,
+   "end": 2.883,
+   "confidence": 0.975
+  },
+  {
+   "word": "deliver",
+   "start": 2.943,
+   "end": 3.264,
+   "confidence": 0.878
+  },
+  {
+   "word": "my",
+   "start": 3.304,
+   "end": 3.424,
+   "confidence": 0.648
+  },
+  {
+   "word": "final",
+   "start": 3.524,
+   "end": 3.844,
+   "confidence": 0.878
+  },
+  {
+   "word": "farewell",
+   "start": 3.944,
+   "end": 4.344,
+   "confidence": 0.792
+  },
+  {
+   "word": "address",
+   "start": 4.364,
+   "end": 4.665,
+   "confidence": 0.861
+  },
+  {
+   "word": "to",
+   "start": 4.685,
+   "end": 4.765,
+   "confidence": 0.633
+  },
+  {
+   "word": "the",
+   "start": 4.805,
+   "end": 4.885,
+   "confidence": 0.834
+  },
+  {
+   "word": "nation,",
+   "start": 4.925,
+   "end": 5.225,
+   "confidence": 0.896
+  },
+  {
+   "word": "following",
+   "start": 5.825,
+   "end": 6.145,
+   "confidence": 0.922
+  },
+  {
+   "word": "in",
+   "start": 6.186,
+   "end": 6.226,
+   "confidence": 0.96
+  },
+  {
+   "word": "the",
+   "start": 6.266,
+   "end": 6.326,
+   "confidence": 0.998
+  },
+  {
+   "word": "tradition",
+   "start": 6.366,
+   "end": 6.746,
+   "confidence": 0.804
+  },
+  {
+   "word": "of",
+   "start": 6.786,
+   "end": 6.846,
+   "confidence": 0.75
+  },
+  {
+   "word": "presidents",
+   "start": 6.906,
+   "end": 7.326,
+   "confidence": 0.874
+  },
+  {
+   "word": "before",
+   "start": 7.386,
+   "end": 7.706,
+   "confidence": 0.78
+  },
+  {
+   "word": "me.",
+   "start": 7.746,
+   "end": 7.847,
+   "confidence": 0.994
+  }
+ ]
+}
