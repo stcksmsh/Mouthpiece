@@ -142,10 +142,11 @@ def attribution(row: dict) -> dict:
 def stitched_attribution(rows: list[dict]) -> dict:
     """Attribution for a word stitched from several clips.
 
-    Speakers and labels are joined over all clips; the other fields come from
-    the first clip (each clip also carries its own attribution).
+    Speakers and labels are joined over all clips. Any other field the clips
+    disagree on is None, since no single value is true for the whole word;
+    each clip keeps its own attribution.
     """
-    out = attribution(rows[0])
+    out = {k: v if all(r.get(k) == v for r in rows) else None for k, v in attribution(rows[0]).items()}
     speakers = list(dict.fromkeys(r["speaker"] for r in rows if r.get("speaker")))
     out["speaker"] = ", ".join(speakers) or None
     out["speaker_label"] = ", ".join(dict.fromkeys(speaker_label(r) for r in rows))

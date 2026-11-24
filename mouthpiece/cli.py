@@ -400,9 +400,11 @@ def cmd_sources(args: argparse.Namespace) -> None:
         return
 
     for s in sources:
-        speaker = index.speaker_label(s)
-        date    = s["date"]    or "no date"
-        print(f"  [{s['id']}] {s['filename']}  — {speaker}, {date}  ({s['word_count']} words)")
+        label = index.speaker_label(s)
+        # The unidentified label already ends with the date; add it only for named speakers.
+        if label == s["speaker"]:
+            label += f", {s['date'] or 'no date'}"
+        print(f"  [{s['id']}] {s['filename']}  — {label}  ({s['word_count']} words)")
 
 
 # ---------------------------------------------------------------------------

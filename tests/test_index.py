@@ -114,5 +114,32 @@ def test_stitched_attribution_joins_speakers_and_labels():
         {"speaker": "Ann"},
     ]
     out = index.stitched_attribution(rows)
+    assert out["speaker"] == "Ann, a@b.org"
     assert out["speaker_label"] == "Ann, unidentified speaker, NASA"
-    assert out["license"] == "CC0"
+
+
+def test_stitched_attribution_drops_fields_the_clips_disagree_on(tmp_path):
+    conn = index.get_connection(tmp_path / "t.db")
+    for name, lic in (("a.wav", "CC0"), ("b.wav", "CC-BY-4.0")):
+        sid = index.insert_source(conn, name, speaker="Ann", license=lic, lang="en")
+        index.insert_word_instances(conn, sid, [{"word": "hello", "start": 0.0, "end": 0.5}])
+    rows = index.search_word(conn, "hello")
+    assert {r["license"] for r in rows} == {"CC0", "CC-BY-4.0"}
+    out = index.stitched_attribution(rows)
+    assert out["license"] is None
+    assert out["lang"] == "en"
+    assert out["speaker_label"] == "Ann"
+
+
+def test_cli_sources_prints_each_date_once(unattributed_db, monkeypatch, capsys):
+    import sys
+
+    from mouthpiece import cli
+
+    monkeypatch.setenv("MOUTHPIECE_DB", str(unattributed_db))
+    monkeypatch.setattr(sys, "argv", ["mouthpiece", "sources"])
+    cli.main()
+    out = capsys.readouterr().out
+    assert "— unidentified speaker, SCOTUS, 2019-04-23  (1 words)" in out
+    assert "— unidentified speaker, NASA  (1 words)" in out
+    assert "@" not in out
