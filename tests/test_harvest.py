@@ -22,9 +22,15 @@ EXPECTED_TIERS = {
     "nasa": "unverified",
     "nasa_reels": "clean",
     "apollo11": "clean",
-    "librivox": "unverified",
+    "librivox": "clean",
     "speeches": "unverified",
     "churchill": "restricted",
+    "voa": "clean",
+}
+
+EXPECTED_LICENCE_URLS = {
+    "librivox": "https://librivox.org/pages/public-domain/",
+    "voa": "https://www.voanews.com/p/5338.html",
 }
 
 
@@ -109,6 +115,8 @@ def test_every_source_declares_the_expected_tier():
         if licence["tier"] == "clean":
             assert licence["licence_url"].startswith("https://"), name
             assert licence["license"], name
+        if name in EXPECTED_LICENCE_URLS:
+            assert licence["licence_url"] == EXPECTED_LICENCE_URLS[name], name
 
 
 @pytest.mark.usefixtures("harvest_dir")
@@ -147,6 +155,66 @@ def test_librivox_creator_is_author_not_speaker(monkeypatch):
     assert not any("@" in v for v in row.values())
     assert row["author"] == "Jane Austen"
     assert row["speaker"] == ""
+
+
+_VOA_FEED = b"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel><title>VOA Learning English Podcast</title>
+<item><title>Learning English Podcast - March 31, 2025</title>
+<link>https://learningenglish.voanews.com/a/8011955.html</link>
+<pubDate>Mon, 31 Mar 2025 00:30:03 +0000</pubDate>
+<author>someone@example.com</author>
+<enclosure url="https://voa-audio.voanews.eu/vle/2025/03/31/20250331-003003-vle122-program_hq.mp3" type="audio/mpeg" length="1"/>
+</item>
+<item><title>No audio here</title><link>https://learningenglish.voanews.com/a/1.html</link></item>
+</channel></rss>"""
+
+
+class _FakeFeed:
+    content = _VOA_FEED
+
+    def raise_for_status(self):
+        return None
+
+
+@pytest.mark.usefixtures("harvest_dir")
+def test_voa_feed_yields_labelled_items_without_speaker(monkeypatch):
+    monkeypatch.setattr(harvest.requests, "get", lambda *_a, **_k: _FakeFeed())
+    items = list(harvest.SOURCES["voa"]())
+    monkeypatch.setattr(harvest.requests, "get", lambda *_a, **_k: _FakeResponse())
+
+    rows = _harvest_rows(items)
+
+    [row] = rows
+    assert not any("@" in v for v in row.values())
+    assert row["speaker"] == ""
+    assert row["source_label"] == "VOA Learning English"
+    assert row["date"] == "2025-03-31"
+    assert row["event"] == "Learning English Podcast - March 31, 2025"
+    assert row["source_url"] == "https://learningenglish.voanews.com/a/8011955.html"
+    assert row["tier"] == "clean"
+    assert row["license"] == "US federal government work (Voice of America)"
+    assert row["licence_url"] == "https://www.voanews.com/p/5338.html"
+
+
+class _BodyFeed:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+
+@pytest.mark.parametrize("body, reason", [
+    (_VOA_FEED + b" " * (10 * 1024 * 1024), "over"),
+    (_VOA_FEED.replace(b"<rss", b'<!DOCTYPE rss [<!ENTITY a "aaaa">]><rss', 1), "entities"),
+])
+def test_rss_feed_refuses_oversized_or_entity_bodies(monkeypatch, capsys, body, reason):
+    monkeypatch.setattr(harvest.requests, "get", lambda *_a, **_k: _BodyFeed(body))
+
+    assert list(harvest.SOURCES["voa"]()) == []
+    out = capsys.readouterr().out
+    assert "feed refused" in out
+    assert reason in out
 
 
 def test_old_header_batch_file_is_refused_untouched(tmp_path, monkeypatch, capsys):
