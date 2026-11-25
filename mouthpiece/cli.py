@@ -2,6 +2,7 @@
 
     mouthpiece "some text" -o out.wav          (bare render)
     mouthpiece render "some text" -o out.wav   (explicit)
+    mouthpiece replay out.manifest.json -o again.wav
     mouthpiece ingest audio.wav -m meta.json
     mouthpiece batch-ingest sources.csv
     mouthpiece coverage "some text"
@@ -16,7 +17,10 @@ from datetime import datetime
 from pathlib import Path
 
 
-_SUBCOMMANDS = {"ingest", "batch-ingest", "render", "coverage", "sources", "remove", "wipe", "candidates", "serve", "resyllabify"}
+_SUBCOMMANDS = {
+    "ingest", "batch-ingest", "render", "replay", "coverage", "sources", "remove", "wipe",
+    "candidates", "serve", "resyllabify",
+}
 
 
 def _paths() -> dict[str, Path]:
@@ -109,13 +113,61 @@ def cmd_render(args: argparse.Namespace) -> None:
     audio, words = assemble.assemble(matches, p["corpus"])
     assemble.write_wav(audio, output)
 
-    manifest_path = manifest.write_manifest(text, words, output, seed=seed)
+    m = manifest.build_manifest(
+        text, words, output,
+        seed=seed,
+        controls={"granularity": args.granularity, "diction": args.diction,
+                  "emotion": args.emotion, "nth": nth},
+        corpus_hash=manifest.corpus_hash(conn),
+        token_state=[{"nth": nth.get(tok)} for tok, _ in matches],
+    )
+    manifest_path = manifest.write_manifest(m, output)
 
     conn.close()
     print(f"\nOutput:   {output}")
     print(f"Manifest: {manifest_path}")
     duration = len(audio) / assemble.SAMPLE_RATE
     print(f"Duration: {duration:.2f}s")
+
+
+def cmd_replay(args: argparse.Namespace) -> None:
+    import json
+    from . import assemble, index, manifest
+
+    src = Path(args.manifest)
+    try:
+        recorded = json.loads(src.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.exit(f"Error: cannot read manifest {src}: {exc}")
+
+    p = _paths()
+    conn = index.get_connection(p["db"])
+    try:
+        matches, adjustments, token_state = manifest.replay_inputs(recorded, conn)
+    except manifest.ReplayError as exc:
+        conn.close()
+        sys.exit(f"Error: {exc}")
+    except (KeyError, TypeError, AttributeError) as exc:
+        conn.close()
+        sys.exit(f"Error: malformed manifest: {src}: {exc!r}")
+
+    current_hash = manifest.corpus_hash(conn)
+    conn.close()
+    if current_hash != recorded.get("corpus_hash"):
+        print(f"Warning: corpus hash mismatch: manifest {recorded.get('corpus_hash')}, "
+              f"current DB {current_hash}. Replaying the recorded clips anyway.")
+
+    output = Path(args.output)
+    audio, words = assemble.assemble(matches, p["corpus"], adjustments=adjustments)
+    assemble.write_wav(audio, output)
+    m = manifest.build_manifest(
+        recorded.get("text", ""), words, output,
+        seed=recorded.get("seed"), controls=recorded.get("controls", {}),
+        corpus_hash=current_hash, token_state=token_state,
+    )
+    manifest_path = manifest.write_manifest(m, output)
+    print(f"Output:   {output}")
+    print(f"Manifest: {manifest_path}")
 
 
 def cmd_candidates(args: argparse.Namespace) -> None:
@@ -465,6 +517,11 @@ def main() -> None:
         help="-1 (flat) .. 0 (default) .. +1 (expressive)",
     )
 
+    # --- replay ---
+    p_replay = sub.add_parser("replay", help="Rebuild a render from its v2 manifest, without reselecting clips")
+    p_replay.add_argument("manifest", help="Path to a .manifest.json written by render")
+    p_replay.add_argument("--output", "-o", required=True, help="Output WAV path")
+
     # --- coverage ---
     p_cov = sub.add_parser("coverage", help="Check word coverage without rendering")
     p_cov.add_argument("text", help="Text to check")
@@ -536,6 +593,7 @@ def main() -> None:
         "ingest":        cmd_ingest,
         "batch-ingest":  cmd_batch_ingest,
         "render":        cmd_render,
+        "replay":        cmd_replay,
         "coverage":      cmd_coverage,
         "candidates":    cmd_candidates,
         "remove":        cmd_remove,
