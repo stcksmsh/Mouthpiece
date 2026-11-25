@@ -36,6 +36,41 @@ def _bias_weight(score: float, slider: float) -> float:
     return s ** (abs(slider) * BIAS_K)
 
 
+def candidate_pool(rows: list[dict]) -> list[dict]:
+    """The rows weighted selection draws from: those at or above MIN_CONF (all
+    of them if none are), cut to the first TOP_K."""
+    pool = [r for r in rows if (r["confidence"] or 0.0) >= MIN_CONF] or rows
+    return pool[:TOP_K]
+
+
+def unit_weight(
+    row: dict,
+    diction: float = 0.0,
+    emotion: float = 0.0,
+    emotion_score: float = 0.5,
+) -> float:
+    """Unnormalised selection weight of one candidate; higher is better.
+    Confidence, scaled by the diction bias (on confidence) and the emotion bias
+    (on `emotion_score`, the row's 0..1 expressiveness within its pool, see
+    pool_weights). Sliders at 0 leave the confidence weight unchanged."""
+    conf = row["confidence"]
+    dscore = conf if conf is not None else 0.5
+    # Multiplication order matches the pre-split code, so rng.choice sees
+    # bit-identical probabilities.
+    return (conf or 0.5) * _bias_weight(dscore, diction) * _bias_weight(emotion_score, emotion)
+
+
+def pool_weights(pool: list[dict], diction: float = 0.0, emotion: float = 0.0) -> list[float]:
+    """unit_weight for each row of `pool`. The emotion score is relative: the
+    mean of the row's f0_var and rms percentile ranks within this pool."""
+    f0_rank  = _rank_normalize(pool, "f0_var")
+    rms_rank = _rank_normalize(pool, "rms")
+    return [
+        unit_weight(r, diction, emotion, (f + m) / 2.0)
+        for r, f, m in zip(pool, f0_rank, rms_rank, strict=True)
+    ]
+
+
 def _pick(
     rows: list[dict],
     rng: np.random.Generator | None,
@@ -46,8 +81,7 @@ def _pick(
     """
     Select one row from a candidate list.
     - nth override: deterministic by rank (1-indexed).
-    - rng provided: weighted random from top-K, biased by confidence, then
-      reweighted by diction (confidence-based) and emotion (f0_var/rms-based).
+    - rng provided: weighted random from candidate_pool(), by pool_weights().
     - neither: top-1 deterministic.
     """
     if nth is not None:
@@ -59,27 +93,8 @@ def _pick(
     if rng is None:
         return rows[0]
 
-    # Filter below confidence floor; fall back to full list if everything is below it.
-    pool = [r for r in rows if (r["confidence"] or 0.0) >= MIN_CONF] or rows
-    pool = pool[:TOP_K]
-
-    weights = np.array([(r["confidence"] or 0.5) for r in pool], dtype=np.float64)
-
-    if diction:
-        dbias = np.array([
-            _bias_weight(r["confidence"] if r.get("confidence") is not None else 0.5, diction)
-            for r in pool
-        ])
-        weights = weights * dbias
-
-    if emotion:
-        f0_rank  = _rank_normalize(pool, "f0_var")
-        rms_rank = _rank_normalize(pool, "rms")
-        ebias = np.array([
-            _bias_weight((f + r) / 2.0, emotion) for f, r in zip(f0_rank, rms_rank)
-        ])
-        weights = weights * ebias
-
+    pool = candidate_pool(rows)
+    weights = np.array(pool_weights(pool, diction, emotion), dtype=np.float64)
     weights /= weights.sum()
     idx = rng.choice(len(pool), p=weights)
     return pool[idx]
