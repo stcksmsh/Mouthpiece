@@ -1,0 +1,14 @@
+{
+ "text": "to the nation to the tradition of presidents",
+ "args": ["--seed", "1", "--selector", "viterbi"],
+ "words": [
+  {"token": "to", "fragments": [["word", 7]]},
+  {"token": "the", "fragments": [["word", 14]]},
+  {"token": "nation", "fragments": [["word", 15]]},
+  {"token": "to", "fragments": [["word", 7]]},
+  {"token": "the", "fragments": [["word", 18]]},
+  {"token": "tradition", "fragments": [["word", 19]]},
+  {"token": "of", "fragments": [["word", 20]]},
+  {"token": "presidents", "fragments": [["word", 21]]}
+ ]
+}

@@ -97,6 +97,7 @@ def cmd_render(args: argparse.Namespace) -> None:
     matches = match.match_text(
         text, conn, rng=rng, nth_overrides=nth,
         granularity=args.granularity, diction=args.diction, emotion=args.emotion,
+        selector=args.selector, smooth=args.smooth, continuity=args.continuity,
     )
     report  = match.coverage_report(matches)
 
@@ -114,11 +115,16 @@ def cmd_render(args: argparse.Namespace) -> None:
     audio, words = assemble.assemble(matches, p["corpus"])
     assemble.write_wav(audio, output)
 
+    controls = {"granularity": args.granularity, "diction": args.diction,
+                "emotion": args.emotion, "nth": nth}
+    if args.selector != "greedy":
+        # Greedy manifests keep their existing controls; only viterbi has these knobs.
+        controls |= {"selector": args.selector, "smooth": args.smooth,
+                     "continuity": args.continuity}
     m = manifest.build_manifest(
         text, words, output,
         seed=seed,
-        controls={"granularity": args.granularity, "diction": args.diction,
-                  "emotion": args.emotion, "nth": nth},
+        controls=controls,
         corpus_hash=manifest.corpus_hash(conn),
         token_state=[{"nth": nth.get(tok)} for tok, _ in matches],
     )
@@ -532,6 +538,20 @@ def main() -> None:
     p_render.add_argument(
         "--emotion", type=float, default=0.0,
         help="-1 (flat) .. 0 (default) .. +1 (expressive)",
+    )
+    p_render.add_argument(
+        "--selector", choices=("greedy", "viterbi"), default="greedy",
+        help="greedy: pick each word on its own; viterbi: pick the whole sentence "
+             "for smooth joins (pitch, colour, tempo, effort)",
+    )
+    p_render.add_argument(
+        "--smooth", type=float, default=1.0,
+        help="viterbi only: multiplier on all join costs (0 = ignore joins)",
+    )
+    p_render.add_argument(
+        "--continuity", type=float, default=0.0,
+        help="viterbi only: bonus for a clip that directly follows the previous one "
+             "in the same recording (0 = patchwork, e.g. 1.0 = prefer runs)",
     )
 
     # --- replay ---
