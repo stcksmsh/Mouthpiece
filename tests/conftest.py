@@ -55,6 +55,22 @@ def corpus_env():
 
 
 @pytest.fixture
+def unattributed_db(tmp_path):
+    """A DB with one source lacking a speaker and one whose speaker is an uploader's email,
+    as legacy rows look before the S0.8 backfill. Each source has one word: "hello", "world"."""
+    from mouthpiece import index
+
+    db = tmp_path / "db" / "mouthpiece.db"
+    conn = index.get_connection(db)
+    a = index.insert_source(conn, "a.wav", source_label="SCOTUS", date="2019-04-23")
+    b = index.insert_source(conn, "b.wav", speaker="uploader@nasa.gov", source_label="NASA")
+    index.insert_word_instances(conn, a, [{"word": "hello", "start": 0.0, "end": 0.5}])
+    index.insert_word_instances(conn, b, [{"word": "world", "start": 0.0, "end": 0.5}])
+    conn.close()
+    return db
+
+
+@pytest.fixture
 def run_cli(corpus_env, monkeypatch, capsys):
     """Run the `mouthpiece` CLI in-process against the fixture corpus.
 

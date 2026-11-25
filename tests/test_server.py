@@ -86,3 +86,31 @@ def test_failed_reroll_does_not_advance_sequence():
             server.api_reroll(r["id"], 1)
     got = [_ids(server.api_reroll(r["id"], 0)) for _ in range(10)]
     assert got == [_ids(server.api_reroll(ref["id"], 0)) for _ in range(10)]
+
+
+@pytest.mark.usefixtures("env")
+def test_render_response_and_reaper_export_use_display_label(tmp_path):
+    r = server.api_render(server.RenderRequest(text="deliver my final address", seed=5))
+    assert [w["speaker_label"] for w in r["words"]] == ["Barack Obama"] * 4
+    script = server._make_reaper_script(server._renders[r["id"]], tmp_path / "x.wav")
+    assert script.count('speaker="Barack Obama"') == 4
+    cands = server.api_candidates("address")
+    assert cands
+    assert all(c["speaker_label"] == "Barack Obama" for c in cands)
+
+
+def test_reaper_export_labels_unattributed_sources(unattributed_db, tmp_path):
+    from mouthpiece import index
+
+    conn = index.get_connection(unattributed_db)
+    words = [
+        server._row_to_word(i, tok, index.search_word(conn, tok)[0])
+        for i, tok in enumerate(["hello", "world"])
+    ]
+    conn.close()
+    render = {"id": "r1", "text": "hello world", "words": words}
+    script = server._make_reaper_script(render, tmp_path / "x.wav")
+    assert 'speaker="unidentified speaker, SCOTUS, 2019-04-23"' in script
+    assert 'speaker="unidentified speaker, NASA"' in script
+    assert "@" not in script
+    assert "unknown" not in script

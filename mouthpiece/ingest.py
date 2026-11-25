@@ -146,11 +146,7 @@ def _ingest(
     source_id = index.insert_source(
         conn,
         filename=dest.name,
-        speaker=meta.get("speaker"),
-        date=meta.get("date"),
-        event=meta.get("event"),
-        source_url=meta.get("source_url"),
-        license=meta.get("license"),
+        **{k: meta.get(k) for k in index.SOURCE_FIELDS},
     )
     print(f"  Source id={source_id}  ({dest.name})")
 

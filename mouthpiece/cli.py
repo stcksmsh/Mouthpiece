@@ -135,7 +135,7 @@ def cmd_candidates(args: argparse.Namespace) -> None:
     for i, r in enumerate(rows, 1):
         conf = f"{r['confidence']:.3f}" if r['confidence'] else "n/a"
         dur  = round(r['end_s'] - r['start_s'], 3)
-        speaker = r['speaker'] or 'unknown'
+        speaker = index.speaker_label(r)
         print(f"  [{i}] id={r['id']}  conf={conf}  dur={dur}s  {speaker}  {r['date'] or ''}  {r['filename']}")
 
 
@@ -243,12 +243,12 @@ def cmd_remove(args: argparse.Namespace) -> None:
     target = args.source.strip()
     if target.isdigit():
         row = conn.execute(
-            "SELECT id, filename, speaker FROM sources WHERE id=?", (int(target),)
+            "SELECT id, filename, speaker, source_label, date FROM sources WHERE id=?", (int(target),)
         ).fetchone()
     else:
         # match on full filename or stem
         row = conn.execute(
-            "SELECT id, filename, speaker FROM sources WHERE filename=? OR filename=?",
+            "SELECT id, filename, speaker, source_label, date FROM sources WHERE filename=? OR filename=?",
             (target, target + ".wav"),
         ).fetchone()
 
@@ -256,10 +256,10 @@ def cmd_remove(args: argparse.Namespace) -> None:
         conn.close()
         sys.exit(f"No source found matching '{target}'. Run 'mouthpiece sources' to list them.")
 
-    source_id, filename, speaker = row["id"], row["filename"], row["speaker"]
+    source_id, filename, speaker = row["id"], row["filename"], index.speaker_label(dict(row))
     word_count = index.word_count(conn, source_id)
 
-    print(f"  [{source_id}] {filename}  ({speaker or 'unknown speaker'}, {word_count} words)")
+    print(f"  [{source_id}] {filename}  ({speaker}, {word_count} words)")
 
     if not args.yes:
         answer = input("Delete this source and all its word instances? [y/N] ").strip().lower()
@@ -309,7 +309,7 @@ def cmd_wipe(args: argparse.Namespace) -> None:
     total_words = sum(s["word_count"] for s in sources)
     print(f"  {len(sources)} sources, {total_words} word instances")
     for s in sources:
-        print(f"    [{s['id']}] {s['filename']}  ({s['speaker'] or 'unknown'})")
+        print(f"    [{s['id']}] {s['filename']}  ({index.speaker_label(s)})")
 
     if not args.yes:
         answer = input("\nWipe entire corpus from DB? [y/N] ").strip().lower()
@@ -400,9 +400,11 @@ def cmd_sources(args: argparse.Namespace) -> None:
         return
 
     for s in sources:
-        speaker = s["speaker"] or "unknown speaker"
-        date    = s["date"]    or "no date"
-        print(f"  [{s['id']}] {s['filename']}  — {speaker}, {date}  ({s['word_count']} words)")
+        label = index.speaker_label(s)
+        # The unidentified label already ends with the date; add it only for named speakers.
+        if label == s["speaker"]:
+            label += f", {s['date'] or 'no date'}"
+        print(f"  [{s['id']}] {s['filename']}  — {label}  ({s['word_count']} words)")
 
 
 # ---------------------------------------------------------------------------

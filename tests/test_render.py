@@ -52,6 +52,22 @@ def test_manifest_attributes_every_found_word(run_cli, tmp_path):
         assert w["source_url"].startswith("https://obamawhitehouse.archives.gov/")
 
 
+ATTRIBUTION_KEYS = {
+    "speaker", "author", "reader", "uploader", "source_label",
+    "license", "licence_url", "lang", "speaker_label",
+}
+
+
+@pytest.mark.parametrize("extra", [(), ("--granularity", "0.8")])
+def test_manifest_words_carry_attribution(run_cli, tmp_path, extra):
+    manifest, _ = _render(run_cli, tmp_path, "keys", "the tradition of presidents", "--seed", "1", *extra)
+    for w in manifest["words"]:
+        assert w.keys() >= ATTRIBUTION_KEYS, w["token"]
+        assert w["speaker_label"] == "Barack Obama"
+        for s in w.get("syllables", []):
+            assert s.keys() >= ATTRIBUTION_KEYS
+
+
 @pytest.mark.parametrize(("len_a", "len_b"), [(16000, 16000), (400, 16000), (16000, 300), (40, 40)])
 def test_crossfade_never_exceeds_quarter_of_shorter_clip(len_a, len_b):
     a = np.ones(len_a, dtype=np.float32)

@@ -73,7 +73,6 @@ def _row_to_word(
         total_dur = sum(durations)
         f0_pairs  = [(r["f0_mean"], d) for r, d in zip(row, durations, strict=True) if r.get("f0_mean")]
         f0_hz     = (sum(f * d for f, d in f0_pairs) / sum(d for _, d in f0_pairs)) if f0_pairs else None
-        speakers  = list(dict.fromkeys(r.get("speaker") or "unknown" for r in row))
         return {
             "index":            i,
             "token":            token,
@@ -91,7 +90,7 @@ def _row_to_word(
                     "phone_key":            r["phone_key"],
                     "parent_word":          r["parent_word"],
                     "source_file":          r["filename"],
-                    "speaker":              r.get("speaker"),
+                    **index.attribution(r),
                     "date":                 r.get("date"),
                     "start_s":              round(r["start_s"], 4),
                     "end_s":                round(r["end_s"], 4),
@@ -104,7 +103,7 @@ def _row_to_word(
             ],
             "word":             token,
             "source_file":      None,
-            "speaker":          ", ".join(speakers),
+            **index.stitched_attribution(row),
             "date":             row[0].get("date"),
             "source_url":       row[0].get("source_url"),
             "confidence":       min((r.get("confidence") or 0.0) for r in row),
@@ -125,7 +124,7 @@ def _row_to_word(
         "word_instance_id": row["id"],
         "word":             row["word"],
         "source_file":      row["filename"],
-        "speaker":          row["speaker"],
+        **index.attribution(row),
         "date":             row["date"],
         "source_url":       row["source_url"],
         "start_s":          round(row["start_s"], 4),
@@ -543,10 +542,7 @@ def _make_reaper_script(render: dict, wav: Path) -> str:
     rid    = render["id"]
 
     # collect unique speakers → stable colour index
-    speakers = list(dict.fromkeys(
-        w.get("speaker") or "unknown"
-        for w in words if w.get("found")
-    ))
+    speakers = list(dict.fromkeys(w["speaker_label"] for w in words if w.get("found")))
 
     # Reaper native colour: 0x01RRGGBB — a small muted palette
     _PALETTE = [
@@ -562,8 +558,9 @@ def _make_reaper_script(render: dict, wav: Path) -> str:
     for w, t in zip(words, times):
         token   = w["token"].replace('"', '\\"')
         found   = "true" if w.get("found") else "false"
-        speaker = (w.get("speaker") or "unknown").replace('"', '\\"')
-        color   = _color(speaker) if w.get("found") else 0
+        label   = w.get("speaker_label", "")
+        speaker = label.replace('"', '\\"')
+        color   = _color(label) if w.get("found") else 0
         rows.append(
             f'  {{start={t["start"]}, stop={t["end"]}, '
             f'token="{token}", speaker="{speaker}", found={found}, color={color}}}'
@@ -644,6 +641,7 @@ def api_candidates(word: str):
             "id":          r["id"],
             "word":        r["word"],
             "speaker":     r["speaker"],
+            "speaker_label": index.speaker_label(r),
             "date":        r["date"],
             "source_file": r["filename"],
             "confidence":  r["confidence"],
@@ -699,6 +697,7 @@ def api_syllable_candidates(word: str):
                     "id":          r["id"],
                     "parent_word": r["parent_word"],
                     "speaker":     r["speaker"],
+                    "speaker_label": index.speaker_label(r),
                     "date":        r["date"],
                     "source_file": r["filename"],
                     "confidence":  r["confidence"],
