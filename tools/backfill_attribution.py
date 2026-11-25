@@ -36,6 +36,8 @@ def read_table(path: Path) -> dict[str, dict]:
         for line, row in enumerate(reader, start=2):
             if any("@" in (v or "") for v in row.values()):
                 raise ValueError(f"{path}:{line}: cell contains '@'")
+            if row["filename"] in table:
+                raise ValueError(f"{path}:{line}: duplicate filename {row['filename']}")
             table[row["filename"]] = {k: row[k] or None for k in FIELDS}
     return table
 

@@ -127,13 +127,47 @@ def test_dry_run_writes_nothing(db, table):
     assert db.read_bytes() == before
 
 
-def test_old_schema_migrated_and_backfilled(tmp_path, table):
-    path = tmp_path / "old.db"
+def test_duplicate_filename_refuses_and_writes_nothing(db, tmp_path):
+    dup = tmp_path / "dup.csv"
+    dup.write_text(TABLE + "book.wav,Someone Else,,,,,,en\n")
+    before = db.read_bytes()
+    result = run(db, dup)
+    assert result.returncode != 0
+    assert "duplicate filename book.wav" in result.stderr
+    assert db.read_bytes() == before
+
+
+def old_schema_db(path: Path) -> Path:
     conn = sqlite3.connect(path)
     conn.executescript(OLD_SCHEMA)
     conn.execute("INSERT INTO sources (filename, speaker) VALUES ('book.wav', 'Jules Lermina')")
+    conn.execute("INSERT INTO sources (filename, speaker) VALUES ('nasa.wav', 'someone@example.org')")
     conn.commit()
     conn.close()
+    return path
+
+
+def test_dry_run_on_old_schema_writes_nothing_and_matches_real_run(tmp_path, table):
+    path = old_schema_db(tmp_path / "old.db")
+    before = path.read_bytes()
+    dry = run(path, table, "--dry-run")
+    assert dry.returncode == 0, dry.stderr
+    assert path.read_bytes() == before
+
+    copy = tmp_path / "copy.db"
+    copy.write_bytes(before)
+    real = run(copy, table)
+    assert real.returncode == 0, real.stderr
+
+    dry_lines, real_lines = dry.stdout.splitlines(), real.stdout.splitlines()
+    assert dry_lines[-1] == "2 row(s) would change"
+    assert real_lines[-1] == "2 row(s) changed"
+    assert dry_lines[:-1] == real_lines[:-1]
+    assert "book.wav: speaker: 'Jules Lermina' → 'Ezwa'; author: NULL → 'Jules Lermina'" in dry.stdout
+
+
+def test_old_schema_migrated_and_backfilled(tmp_path, table):
+    path = old_schema_db(tmp_path / "old.db")
 
     result = run(path, table)
     assert result.returncode == 0, result.stderr
