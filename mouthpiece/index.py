@@ -400,6 +400,15 @@ def get_word_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None
     return dict(row) if row else None
 
 
+def source_allowed(conn: sqlite3.Connection, word_instance_id: int, source_filter: SourceFilter) -> bool:
+    """Whether the word instance's source passes `source_filter`."""
+    cond, params = source_filter.sql()
+    return conn.execute(
+        f"SELECT 1 FROM word_instances wi JOIN sources s ON wi.source_id = s.id WHERE wi.id = ? AND {cond}",
+        (word_instance_id, *params),
+    ).fetchone() is not None
+
+
 # Sub-word unit tables. Syllables and phones share one query shape; only these
 # column lists differ. Names come from this fixed dict, never from callers.
 _UNITS = {

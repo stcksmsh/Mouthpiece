@@ -302,9 +302,12 @@ def api_swap(render_id: str, word_index: int, req: SwapRequest):
         raise HTTPException(400, "word_index out of range")
     conn = _conn()
     row = index.get_word_instance(conn, req.word_instance_id)
+    allowed = row is not None and index.source_allowed(conn, row["id"], render["source_filter"])
     conn.close()
     if row is None:
         raise HTTPException(404, f"word_instance {req.word_instance_id} not found")
+    if not allowed:
+        raise HTTPException(400, f"word_instance {req.word_instance_id} comes from a source this render's filter excludes")
     token  = render["matches"][word_index][0]
     old_w  = render["words"][word_index]
     _break_phrase(render, word_index)
@@ -770,9 +773,13 @@ def api_swap_syllable(render_id: str, word_index: int, syll_index: int, req: Swa
 
     conn = _conn()
     row = index.get_syllable_instance(conn, req.syllable_instance_id)
+    allowed = row is not None and index.source_allowed(conn, row["word_instance_id"], render["source_filter"])
     conn.close()
     if row is None:
         raise HTTPException(404, f"syllable_instance {req.syllable_instance_id} not found")
+    if not allowed:
+        raise HTTPException(
+            400, f"syllable_instance {req.syllable_instance_id} comes from a source this render's filter excludes")
     if row["phone_key"] != current[syll_index]["phone_key"]:
         raise HTTPException(400, "syllable_instance does not match this syllable's phone_key")
 

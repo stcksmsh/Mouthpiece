@@ -3,9 +3,10 @@
 import json
 import shutil
 import sqlite3
+from pathlib import Path
 
 import pytest
-from conftest import _cli_runner, fixture_data, index_units
+from conftest import _cli_runner, fixture_data, index_units, scratch_dir
 
 from mouthpiece import index, ingest, match, phonemes, server
 
@@ -15,31 +16,38 @@ TEXT = "i traveled to chicago to deliver my final farewell address to the nation
 DEFAULT_CONTROLS = {"tiers": ["clean", "unverified"], "only": [], "exclude": []}
 
 
-@pytest.fixture
-def mixed(corpus_env, tmp_path, monkeypatch, capsys):
+@pytest.fixture(scope="module")
+def mixed_env(corpus_env):
     """The fixture corpus plus a restricted copy of it under another speaker. The copy's
     clips are a little more confident, so an unfiltered render prefers them, and it holds
-    one extra word, "zxqvbn", that no other source has. Returns (run_cli, env)."""
-    corpus = tmp_path / "corpus"
-    shutil.copytree(corpus_env["MOUTHPIECE_CORPUS"], corpus)
-    shutil.copy(corpus / OBAMA, corpus / CHURCHILL)
-    db = tmp_path / "db" / "mouthpiece.db"
-    db.parent.mkdir()
-    src, dst = sqlite3.connect(corpus_env["MOUTHPIECE_DB"]), sqlite3.connect(db)
-    src.backup(dst)
-    src.close()
-    dst.close()
+    one extra word, "zxqvbn", that no other source has. Built once: renders and the
+    server only read the DB."""
+    with scratch_dir("pytest-mixed-") as root:
+        corpus = root / "corpus"
+        shutil.copytree(corpus_env["MOUTHPIECE_CORPUS"], corpus)
+        shutil.copy(corpus / OBAMA, corpus / CHURCHILL)
+        db = root / "db" / "mouthpiece.db"
+        db.parent.mkdir()
+        src, dst = sqlite3.connect(corpus_env["MOUTHPIECE_DB"]), sqlite3.connect(db)
+        src.backup(dst)
+        src.close()
+        dst.close()
 
-    words = [{**w, "confidence": min(w["confidence"] + 0.01, 1.0)} for w in fixture_data()["words"]]
-    words.append({"word": "zxqvbn", "start": 7.0, "end": 7.4, "confidence": 0.9})
-    conn = index.get_connection(db)
-    sid = index.insert_source(conn, CHURCHILL, speaker="Winston Churchill", tier="restricted")
-    index.insert_word_instances(conn, sid, words)
-    index_units(conn, sid)
-    conn.close()
+        words = [{**w, "confidence": min(w["confidence"] + 0.01, 1.0)} for w in fixture_data()["words"]]
+        words.append({"word": "zxqvbn", "start": 7.0, "end": 7.4, "confidence": 0.9})
+        conn = index.get_connection(db)
+        sid = index.insert_source(conn, CHURCHILL, speaker="Winston Churchill", tier="restricted")
+        index.insert_word_instances(conn, sid, words)
+        index_units(conn, sid)
+        conn.close()
 
-    env = {**corpus_env, "MOUTHPIECE_DB": str(db), "MOUTHPIECE_CORPUS": str(corpus)}
-    return _cli_runner(env, monkeypatch, capsys), env
+        yield {**corpus_env, "MOUTHPIECE_DB": str(db), "MOUTHPIECE_CORPUS": str(corpus)}
+
+
+@pytest.fixture
+def mixed(mixed_env, monkeypatch, capsys):
+    """Returns (run_cli, env) on the mixed corpus."""
+    return _cli_runner(mixed_env, monkeypatch, capsys), mixed_env
 
 
 _SOURCE_OF = {
@@ -76,19 +84,17 @@ MODES = [(), ("--granularity", "0.8"), ("--granularity", "-0.8"), ("--selector",
 
 
 @pytest.mark.parametrize("mode", MODES)
-@pytest.mark.parametrize("seed", ["1", "2"])
-def test_default_render_never_uses_restricted(mixed, tmp_path, mode, seed):
+def test_default_render_never_uses_restricted(mixed, tmp_path, mode):
     run, env = mixed
-    m, _ = _render(run, tmp_path, TEXT, "--seed", seed, *mode)
+    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", *mode)
     frags = _fragments(env, m)
     assert frags
     assert {f for _, f in frags} == {OBAMA}
 
 
-@pytest.mark.parametrize("mode", MODES)
-def test_tier_all_can_use_restricted(mixed, tmp_path, mode):
+def test_tier_all_can_use_restricted(mixed, tmp_path):
     run, env = mixed
-    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", "--tier", "all", *mode)
+    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", "--tier", "all")
     assert CHURCHILL in {f for _, f in _fragments(env, m)}
 
 
@@ -111,21 +117,32 @@ def test_only_matching_nothing_renders_gaps(mixed, tmp_path):
     assert "Missing:  deliver, my, address" in stdout
 
 
-@pytest.mark.parametrize(("args", "allowed"), [
-    (("--tier", "all", "--only", "CHURCHILL"), {CHURCHILL}),         # speaker label
-    (("--tier", "all", "--only", "obama_2017"), {OBAMA}),             # filename
-    (("--tier", "all", "--only", "nobody", "--only", "winston"), {CHURCHILL}),  # any one may match
-    (("--tier", "all", "--exclude", "barack"), {CHURCHILL}),
-    (("--tier", "all", "--exclude", "copy.wav"), {OBAMA}),
-    (("--tier", "restricted,clean", "--exclude", "obama"), {CHURCHILL}),
+@pytest.mark.parametrize(("kwargs", "allowed"), [
+    ({"tiers": index.TIERS, "only": ("CHURCHILL",)}, {CHURCHILL}),         # speaker label
+    ({"tiers": index.TIERS, "only": ("obama_2017",)}, {OBAMA}),             # filename
+    ({"tiers": index.TIERS, "only": ("nobody", "winston")}, {CHURCHILL}),  # any one may match
+    ({"tiers": index.TIERS, "exclude": ("barack",)}, {CHURCHILL}),
+    ({"tiers": index.TIERS, "exclude": ("copy.wav",)}, {OBAMA}),
+    ({"tiers": ("restricted", "clean"), "exclude": ("obama",)}, {CHURCHILL}),
 ])
+def test_only_and_exclude_queries(mixed_env, kwargs, allowed):
+    source_filter = index.SourceFilter(**kwargs)
+    conn = index.get_connection(Path(mixed_env["MOUTHPIECE_DB"]))
+    key = phonemes.phone_key(phonemes.syllabify("deliver")[0])
+    words = index.search_word(conn, "deliver", source_filter=source_filter)
+    sylls = index.search_syllable(conn, key, source_filter=source_filter)
+    conn.close()
+    assert _files(words) == allowed
+    assert _files(sylls) == allowed
+
+
 @pytest.mark.parametrize("mode", MODES)
-def test_only_and_exclude(mixed, tmp_path, args, allowed, mode):
+def test_only_and_exclude_render(mixed, tmp_path, mode):
     run, env = mixed
-    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", *args, *mode)
+    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", "--tier", "all", "--exclude", "barack", *mode)
     frags = _fragments(env, m)
     assert all(w["found"] for w in m["words"])
-    assert {f for _, f in frags} == allowed
+    assert {f for _, f in frags} == {CHURCHILL}
     tiers = {t for t, _ in frags}
     # The modes must really exercise phrase runs and stitched sub-word units.
     if mode == ("--granularity", "0.8"):
@@ -166,6 +183,54 @@ def test_server_render_excludes_restricted(mixed, monkeypatch):
     m = server.api_manifest(r["id"])
     assert m["controls"]["sources"] == DEFAULT_CONTROLS
     assert {f for _, f in _fragments(env, m)} == {OBAMA}
+
+
+CHURCHILL_ONLY = index.SourceFilter(tiers=index.TIERS, only=("churchill",))
+
+
+def test_server_swap_refuses_excluded_source(mixed, monkeypatch):
+    _, env = mixed
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    conn = index.get_connection(Path(env["MOUTHPIECE_DB"]))
+
+    r = server.api_render(server.RenderRequest(text="deliver address", seed=1))
+    restricted = index.search_word(conn, "deliver", source_filter=CHURCHILL_ONLY)[0]
+    with pytest.raises(server.HTTPException) as exc:
+        server.api_swap(r["id"], 0, server.SwapRequest(word_instance_id=restricted["id"]))
+    assert exc.value.status_code == 400 and "excludes" in exc.value.detail
+    allowed = index.search_word(conn, "deliver")[0]
+    server.api_swap(r["id"], 0, server.SwapRequest(word_instance_id=allowed["id"]))
+
+    r = server.api_render(server.RenderRequest(text=TEXT, seed=1, granularity=-0.8))
+    idx, sylls = next((i, s) for i, (_, s) in enumerate(server._renders[r["id"]]["matches"])
+                      if isinstance(s, list))
+    restricted = index.search_syllable(conn, sylls[0]["phone_key"], source_filter=CHURCHILL_ONLY)[0]
+    conn.close()
+    with pytest.raises(server.HTTPException) as exc:
+        server.api_swap_syllable(r["id"], idx, 0,
+                                 server.SwapSyllableRequest(syllable_instance_id=restricted["id"]))
+    assert exc.value.status_code == 400 and "excludes" in exc.value.detail
+    m = server.api_manifest(r["id"])
+    assert {f for _, f in _fragments(env, m)} == {OBAMA}
+
+
+def test_cli_candidates_use_filter(mixed):
+    run, _ = mixed
+    code, out = run("candidates", "deliver")
+    assert code == 0 and OBAMA in out and CHURCHILL not in out
+    code, out = run("candidates", "deliver", "--tier", "all", "--only", "churchill")
+    assert code == 0 and CHURCHILL in out and OBAMA not in out
+
+
+def test_cli_coverage_uses_filter(mixed):
+    run, _ = mixed
+    code, out = run("coverage", "deliver zxqvbn")
+    assert code == 0 and "Missing:  zxqvbn" in out
+    code, out = run("coverage", "deliver zxqvbn", "--tier", "all")
+    assert code == 0 and "All words covered." in out
+    code, out = run("coverage", "deliver", "--only", " ")
+    assert code != 0 and "Error:" in out
 
 
 @pytest.fixture

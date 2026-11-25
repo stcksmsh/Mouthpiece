@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,8 @@ def index_units(conn, source_id: int) -> None:
     """Add syllable and phone rows for every word of one source, as ingest does."""
     from mouthpiece import index, phonemes
 
+    # The insert helpers commit per word; a test DB is throwaway, so skip the fsync each costs.
+    conn.execute("PRAGMA synchronous=OFF")
     for row in conn.execute(
         "SELECT id, word, start_s, end_s FROM word_instances WHERE source_id=?", (source_id,)
     ).fetchall():
@@ -31,6 +34,16 @@ def index_units(conn, source_id: int) -> None:
         phones = phonemes.compute_phone_rows(row["word"], row["start_s"], row["end_s"])
         if phones:
             index.insert_phone_instances(conn, row["id"], phones)
+
+
+@contextmanager
+def scratch_dir(prefix: str):
+    """A temporary directory under the repo's git-ignored scratch dir, not the system temp
+    dir: SQLite commits once per insert, and on a slow /tmp that made setup take ~25 s."""
+    scratch = Path(__file__).resolve().parents[1] / ".claude" / "tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch, prefix=prefix) as root:
+        yield Path(root)
 
 
 def fixture_data() -> dict:
@@ -61,12 +74,8 @@ def build_fixture_db(root: Path) -> dict[str, str]:
 
 @pytest.fixture(scope="session")
 def corpus_env():
-    # Built under the repo's git-ignored scratch dir, not the system temp dir: SQLite
-    # commits once per insert, and on a slow /tmp that made setup take ~25 s.
-    scratch = Path(__file__).resolve().parents[1] / ".claude" / "tmp"
-    scratch.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=scratch, prefix="pytest-corpus-") as root:
-        yield build_fixture_db(Path(root))
+    with scratch_dir("pytest-corpus-") as root:
+        yield build_fixture_db(root)
 
 
 @pytest.fixture
