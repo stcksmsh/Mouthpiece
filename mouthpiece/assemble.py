@@ -226,12 +226,12 @@ def assemble(
 ) -> tuple[np.ndarray, list[dict]]:
     """
     Build audio from match results.
-    adjustments: {word_index: {speed, pitch}} for per-word rubberband processing.
+    adjustments: {word_index: {speed, pitch, gap, gap_s}}: per-word rubberband processing,
+    and seconds of silence before the word (gap) or in place of a missing word (gap_s).
+    Defaults are WORD_GAP between units and MISSING_GAP for a missing word.
     Returns (audio_array_float32, manifest_words).
     """
-    adj             = adjustments or {}
-    gap_silence     = np.zeros(WORD_GAP,    dtype=np.float32)
-    missing_silence = np.zeros(MISSING_GAP, dtype=np.float32)
+    adj = adjustments or {}
 
     parts: list[np.ndarray] = []
     manifest_words: list[dict] = []
@@ -239,8 +239,11 @@ def assemble(
     units = _group_phrase_units(matches)
 
     for u_idx, (i, tokens_u, rows_u) in enumerate(units):
-        if u_idx > 0:
-            parts.append(gap_silence.copy())
+        default_gap = WORD_GAP / SAMPLE_RATE if u_idx > 0 else 0.0
+        gap_n = round(adj.get(i, {}).get("gap", default_gap) * SAMPLE_RATE)
+        if gap_n > 0:
+            parts.append(np.zeros(gap_n, dtype=np.float32))
+        gap = round(gap_n / SAMPLE_RATE, 4)
 
         if len(rows_u) > 1:
             token    = " ".join(tokens_u)
@@ -282,6 +285,8 @@ def assemble(
                     "duration_s":       round(row_last["end_s"] - row0["start_s"], 3),
                     "speed":            speed,
                     "pitch":            pitch,
+                    "gap":              gap,
+                    "fragments":        [{"tier": "phrase", "instance_id": r["id"]} for r in rows_u],
                 }
             )
             continue
@@ -290,9 +295,13 @@ def assemble(
 
         if row is None:
             print(f"  [MISSING] '{token}' — gap inserted")
-            parts.append(missing_silence.copy())
+            word_adj  = adj.get(i, {})
+            missing_n = round(word_adj.get("gap_s", MISSING_GAP / SAMPLE_RATE) * SAMPLE_RATE)
+            parts.append(np.zeros(missing_n, dtype=np.float32))
             manifest_words.append(
-                {"token": token, "found": False, "gap_s": round(MISSING_GAP / SAMPLE_RATE, 3)}
+                {"token": token, "found": False, "gap_s": round(missing_n / SAMPLE_RATE, 3),
+                 "speed": word_adj.get("speed", 1.0), "pitch": word_adj.get("pitch", 0.0),
+                 "gap": gap, "fragments": []}
             )
         elif isinstance(row, list):
             word_adj = adj.get(i, {})
@@ -333,6 +342,12 @@ def assemble(
                     "f0_hz":      round(f0_hz, 1) if f0_hz else None,
                     "speed":      speed,
                     "pitch":      pitch,
+                    "gap":        gap,
+                    "fragments": [
+                        {"tier": "syllable" if "phones" in r else "phone",
+                         "instance_id": r["id"], "run_id": r.get("run_id")}
+                        for r in row
+                    ],
                 }
             )
         else:
@@ -359,6 +374,8 @@ def assemble(
                     "confidence":       row["confidence"],
                     "speed":            word_adj.get("speed", 1.0),
                     "pitch":            word_adj.get("pitch", 0.0),
+                    "gap":              gap,
+                    "fragments":        [{"tier": "word", "instance_id": row["id"]}],
                 }
             )
 

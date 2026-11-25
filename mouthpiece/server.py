@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import assemble, index, match, phonemes, reference
+from . import assemble, index, manifest, match, phonemes, reference
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -169,8 +169,12 @@ def _assemble(render: dict) -> None:
     p["renders"].mkdir(parents=True, exist_ok=True)
     wav  = p["renders"] / f"{render['id']}.wav"
     adj  = _adj_from_words(render["words"])
-    audio, _ = assemble.assemble(render["matches"], p["corpus"], adjustments=adj)
+    audio, words = assemble.assemble(render["matches"], p["corpus"], adjustments=adj)
     assemble.write_wav(audio, wav)
+    conn = _conn()
+    render["corpus_hash"] = manifest.corpus_hash(conn)
+    conn.close()
+    render["manifest_words"] = words
     render["wav_path"]   = str(wav)
     render["duration_s"] = round(len(audio) / assemble.SAMPLE_RATE, 2)
 
@@ -303,6 +307,7 @@ def api_swap(render_id: str, word_index: int, req: SwapRequest):
         raise HTTPException(404, f"word_instance {req.word_instance_id} not found")
     token  = render["matches"][word_index][0]
     old_w  = render["words"][word_index]
+    _count_swap(render, word_index)
     render["matches"][word_index] = (token, row)
     render["words"][word_index]   = _row_to_word(
         word_index, token, row,
@@ -312,6 +317,11 @@ def api_swap(render_id: str, word_index: int, req: SwapRequest):
     )
     _assemble(render)
     return _render_response(render)
+
+
+def _count_swap(render: dict, idx: int) -> None:
+    swaps = render.setdefault("swaps", {})
+    swaps[idx] = swaps.get(idx, 0) + 1
 
 
 def _replace_match(render: dict, idx: int, token: str, row) -> None:
@@ -518,6 +528,22 @@ async def api_reference_match(
 
     _assemble(render)
     return _render_response(render)
+
+
+@app.get("/api/render/{render_id}/manifest")
+def api_manifest(render_id: str):
+    render = _get(render_id)
+    swaps, rerolls = render.get("swaps", {}), render.get("rerolls", {})
+    state = [
+        {"nth": None, "locked": w.get("locked", False),
+         "swaps": swaps.get(i, 0), "rerolls": rerolls.get(i, 0)}
+        for i, w in enumerate(render["words"])
+    ]
+    return manifest.build_manifest(
+        render["text"], render["manifest_words"], Path(render["wav_path"]),
+        seed=render["seed"], controls={**render["criteria"], "nth": {}},
+        corpus_hash=render["corpus_hash"], token_state=state,
+    )
 
 
 @app.get("/api/render/{render_id}/reaper")
@@ -746,6 +772,7 @@ def api_swap_syllable(render_id: str, word_index: int, syll_index: int, req: Swa
 
     new_syllables[syll_index] = row
     old_w = render["words"][word_index]
+    _count_swap(render, word_index)
     render["matches"][word_index] = (token, new_syllables)
     render["words"][word_index]   = _row_to_word(
         word_index, token, new_syllables,
