@@ -33,7 +33,9 @@ existing batch file with the old header is refused: start a new batch file.
 """
 
 import argparse, csv, hashlib, os, re, subprocess, sys, tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from typing import Iterator, Optional
 
 import requests
@@ -271,6 +273,46 @@ def _date8(name):  # 20170114_... -> 2017-01-14
     return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
 
 
+# ------------------------- podcast feed adapter -------------------------
+
+class RSSFeedAdapter:
+    """One Item per <enclosure> in a podcast RSS feed (direct audio files).
+
+    Feeds name the show, not the voice, so speaker stays "" and
+    `source_label` says where the clip came from.
+    """
+    def __init__(self, feed_url, event, source_label, stem_prefix, **licence):
+        self.licence = _licence(**licence)
+        self.feed_url = feed_url
+        self.event = event
+        self.source_label = source_label
+        self.stem_prefix = stem_prefix
+
+    def __iter__(self) -> Iterator[Item]:
+        try:
+            r = requests.get(self.feed_url, headers=UA, timeout=30)
+            r.raise_for_status()
+            root = ET.fromstring(r.content)
+        except (requests.RequestException, ET.ParseError) as e:
+            print(f"  ! feed failed {self.feed_url}: {e}"); return
+        for it in root.iter("item"):
+            enc = it.find("enclosure")
+            url = enc.get("url", "") if enc is not None else ""
+            if not url.startswith("https://"):
+                continue
+            try:
+                date = parsedate_to_datetime(it.findtext("pubDate") or "").date().isoformat()
+            except (TypeError, ValueError):
+                date = ""
+            base = os.path.splitext(os.path.basename(url.split("?")[0]))[0]
+            yield Item(media_url=url, speaker="", date=date,
+                       event=(it.findtext("title") or "").strip() or self.event,
+                       source_url=(it.findtext("link") or "").strip() or url,
+                       source_label=self.source_label,
+                       stem=_make_stem(self.stem_prefix, base),
+                       **self.licence)
+
+
 # ------------------------- archive.org adapters -------------------------
 
 class IAItemFilesAdapter:
@@ -490,12 +532,28 @@ def librivox():
     # Each item is a separate audiobook; grab one audio file per item.
     # Narrated-prose register (calm to dramatic), many different readers.
     # IA `creator` is the book's author; the reader is unknown at harvest time.
-    # LibriVox's public-domain statement (librivox.org/pages/public-domain/)
-    # could not be loaded to confirm it, so: unverified.
+    # Evidence: LibriVox states "all our recordings are public domain
+    # (definitely in the USA ...)".
     return IACollectionAdapter(query='collection:librivoxaudio',
                                author_field="creator",
                                event="LibriVox reading",
-                               tier="unverified")
+                               license="public domain (LibriVox dedication)",
+                               licence_url="https://librivox.org/pages/public-domain/",
+                               tier="clean")
+
+def voa():
+    # VOA Learning English daily podcast: about 250 half-hour programmes with
+    # direct mp3 enclosures, read by a rotating set of VOA presenters and
+    # reporters. The feed names no voice per episode, so speaker is "".
+    # Evidence: VOA's terms state "All text, audio and video material
+    # produced exclusively by the Voice of America is in the public domain."
+    return RSSFeedAdapter(
+        "https://learningenglish.voanews.com/podcast/?zoneId=1689",
+        event="VOA Learning English Podcast",
+        source_label="VOA Learning English", stem_prefix="voa_le",
+        license="US federal government work (Voice of America)",
+        licence_url="https://www.voanews.com/p/5338.html",
+        tier="clean")
 
 def _speech_speaker_from_name(name):
     # "Inaugural Address - Franklin D. Roosevelt (1933).ogg" -> "Franklin D. Roosevelt"
@@ -533,7 +591,8 @@ def churchill():
 
 SOURCES = {"obama": obama, "trump": trump, "scotus": scotus,
            "nasa": nasa, "nasa_reels": nasa_reels, "apollo11": apollo11,
-           "librivox": librivox, "speeches": speeches, "churchill": churchill}
+           "librivox": librivox, "speeches": speeches, "churchill": churchill,
+           "voa": voa}
 
 
 def main():
