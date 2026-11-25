@@ -1,0 +1,10 @@
+{
+ "text": "to the to the",
+ "args": ["--seed", "2", "--selector", "viterbi", "--nth", "to:3"],
+ "words": [
+  {"token": "to", "fragments": [["word", 13]]},
+  {"token": "the", "fragments": [["word", 14]]},
+  {"token": "to", "fragments": [["word", 13]]},
+  {"token": "the", "fragments": [["word", 14]]}
+ ]
+}

@@ -2,6 +2,7 @@
 
     python tools/bench.py [--label NAME] [--seed-offset N] [--out DIR] [--sentences FILE]
                           [--granularity X] [--diction X] [--emotion X]
+                          [--selector greedy|viterbi] [--smooth X] [--continuity X]
 
 Writes DIR/<sha>[-dirty][-label]/NN.wav, NN.manifest.json, summary.csv and index.txt, where NN
 is the 1-based line number and the render seed is NN + seed-offset. DB, corpus and render paths
@@ -102,12 +103,13 @@ def main() -> None:
     ap.add_argument("--label")
     ap.add_argument("--seed-offset", type=int, default=0)
     ap.add_argument("--sentences", type=Path, default=DEFAULT_SENTENCES)
-    for flag in ("granularity", "diction", "emotion"):
+    for flag in ("granularity", "diction", "emotion", "smooth", "continuity"):
         ap.add_argument(f"--{flag}", type=float)
+    ap.add_argument("--selector", choices=("greedy", "viterbi"))
     args = ap.parse_args()
 
     lines = [ln.strip() for ln in args.sentences.read_text().splitlines() if ln.strip()]
-    controls = [x for f in ("granularity", "diction", "emotion")
+    controls = [x for f in ("granularity", "diction", "emotion", "selector", "smooth", "continuity")
                 if getattr(args, f) is not None for x in (f"--{f}", str(getattr(args, f)))]
 
     run_dir = args.out / run_name(args.label)

@@ -1,0 +1,12 @@
+{
+ "text": "to presidential the to zxqvbn the",
+ "args": ["--seed", "3", "--selector", "viterbi", "--smooth", "2"],
+ "words": [
+  {"token": "to", "fragments": [["word", 7]]},
+  {"token": "presidential", "fragments": [["phone", 78], ["phone", 79], ["phone", 80], ["phone", 81], ["phone", 82], ["phone", 83], ["phone", 84], ["phone", 85], ["phone", 55], ["phone", 56], ["phone", 60]]},
+  {"token": "the", "fragments": [["word", 14]]},
+  {"token": "to", "fragments": [["word", 7]]},
+  {"token": "zxqvbn", "fragments": []},
+  {"token": "the", "fragments": [["word", 18]]}
+ ]
+}

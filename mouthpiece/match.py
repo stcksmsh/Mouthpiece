@@ -1,5 +1,6 @@
 """Word matching: tokenize input text, find best clip candidates per token."""
 
+import math
 import re
 
 import numpy as np
@@ -9,6 +10,17 @@ MIN_CONF = 0.35     # clips below this confidence are excluded from the pool
 BIAS_K = 3.0        # exponent sharpness for diction/emotion reweighting
 MAX_PHRASE_LEN = 6  # cap on how many words a single phrase run can span
 PHONEME_FORCE_THRESHOLD = -0.5  # granularity below this skips straight to phoneme-only
+
+# Viterbi selector. Transition terms are each about 1.0 at a jump a listener
+# clearly hears; --smooth scales their sum, --continuity is a separate bonus.
+W_PITCH = 1.0         # weight of the pitch term: |semitone jump| capped at an octave, /12
+W_COLOUR = 1.0        # weight of the colour term: |spectral tilt change| * TILT_SCALE
+TILT_SCALE = 1 / 6    # a 6 dB/octave tilt change (close mic vs far room) counts as 1.0
+W_TEMPO = 1.0         # weight of the tempo term: |log(rate ratio)|, so double speed = 0.69
+W_EFFORT = 1.0        # weight of the effort term: |rms change| / 20, so 20 dB = 1.0
+PITCH_CAP_ST = 12.0   # pyin octave errors make bigger pitch jumps unreliable: cap at one octave
+CONTINUITY_GAP_S = 0.3  # b "directly follows" a when it starts within this many seconds of a's end
+TEMPERATURE = 0.5     # Gumbel noise scale on unit costs; 0 = deterministic best path
 
 
 def tokenize(text: str) -> list[str]:
@@ -98,6 +110,105 @@ def _pick(
     weights /= weights.sum()
     idx = rng.choice(len(pool), p=weights)
     return pool[idx]
+
+
+def _clip_rate(row: dict) -> float | None:
+    """Phonemes (or letters when phonemes are unknown) per second of the clip."""
+    dur = row["end_s"] - row["start_s"]
+    if row.get("phonemes"):
+        n = len(row["phonemes"].split())
+    elif row.get("phone_key"):
+        n = len(row["phone_key"].split("-"))
+    else:
+        n = sum(c.isalpha() for c in row.get("word") or "")
+    return n / dur if n and dur > 0 else None
+
+
+def transition_cost(a: dict | None, b: dict | None, smooth: float = 1.0,
+                    continuity: float = 0.0) -> float:
+    """Cost of playing clip `b` right after clip `a`. Each term is 0 when either
+    side's feature is unknown. A change of source or speaker costs nothing; the
+    continuity bonus (not scaled by `smooth`) rewards b directly following a in
+    the same recording."""
+    if a is None or b is None:
+        return 0.0
+    cost = 0.0
+    fa, fb = a.get("f0_mean"), b.get("f0_mean")
+    if fa and fb:
+        cost += W_PITCH * min(abs(12 * math.log2(fb / fa)), PITCH_CAP_ST) / PITCH_CAP_ST
+    ta, tb = a.get("spectral_tilt"), b.get("spectral_tilt")
+    if ta is not None and tb is not None:
+        cost += W_COLOUR * abs(tb - ta) * TILT_SCALE
+    ra, rb = _clip_rate(a), _clip_rate(b)
+    if ra and rb:
+        cost += W_TEMPO * abs(math.log(rb / ra))
+    ea, eb = a.get("rms"), b.get("rms")
+    if ea is not None and eb is not None:
+        cost += W_EFFORT * abs(eb - ea) / 20
+    cost *= smooth
+    if (continuity and a.get("source_id") is not None and a.get("source_id") == b.get("source_id")
+            and 0.0 <= b["start_s"] - a["end_s"] <= CONTINUITY_GAP_S):
+        cost -= continuity
+    return cost
+
+
+def viterbi(lattice: list[list[tuple[float, dict | None, dict | None]]],
+            smooth: float = 1.0, continuity: float = 0.0) -> list[int]:
+    """Index of the chosen node at each position, minimising the sum of unit
+    costs plus transition_cost between consecutive positions. A node is
+    (unit_cost, first_row, last_row): transitions enter through first_row and
+    leave through last_row. Ties go to the lower node index. O(n·K²)."""
+    if not lattice:
+        return []
+    best = [c for c, _, _ in lattice[0]]
+    back: list[list[int]] = []
+    for prev, cur in zip(lattice, lattice[1:]):
+        scores, ptrs = [], []
+        for cost, first, _ in cur:
+            totals = [b + transition_cost(node[2], first, smooth, continuity)
+                      for b, node in zip(best, prev, strict=True)]
+            k = min(range(len(totals)), key=totals.__getitem__)
+            scores.append(totals[k] + cost)
+            ptrs.append(k)
+        best = scores
+        back.append(ptrs)
+    path = [min(range(len(best)), key=best.__getitem__)]
+    for ptrs in reversed(back):
+        path.append(ptrs[path[-1]])
+    return path[::-1]
+
+
+def _select_viterbi(
+    results: list[tuple[str, dict | list[dict] | tuple[dict, ...] | None]],
+    rng: np.random.Generator | None,
+    diction: float,
+    emotion: float,
+    smooth: float,
+    continuity: float,
+) -> list[tuple[str, dict | list[dict] | None]]:
+    """Replace each deferred candidate pool (a tuple) in `results` with the row
+    on the cheapest whole-sentence path. Unit cost = -log(normalised
+    pool_weights) - TEMPERATURE * Gumbel noise, so at smooth 0 every position
+    samples the greedy distribution (Gumbel-max). RNG: exactly one
+    rng.gumbel(size=total pool size) call, pools in sentence order; none
+    when TEMPERATURE is 0 or rng is None."""
+    pools = [clip for _, clip in results if isinstance(clip, tuple)]
+    noise = iter(rng.gumbel(size=sum(map(len, pools)))
+                 if rng is not None and TEMPERATURE else [])
+    lattice = []
+    for _, clip in results:
+        if isinstance(clip, tuple):
+            w = pool_weights(list(clip), diction, emotion)
+            total = sum(w)
+            lattice.append([(-math.log(x / total) - TEMPERATURE * next(noise, 0.0), r, r)
+                            for x, r in zip(w, clip, strict=True)])
+        elif isinstance(clip, list):
+            lattice.append([(0.0, clip[0], clip[-1])])
+        else:
+            lattice.append([(0.0, clip, clip)])
+    path = viterbi(lattice, smooth, continuity)
+    return [(tok, clip[k] if isinstance(clip, tuple) else clip)
+            for (tok, clip), k in zip(results, path, strict=True)]
 
 
 def _candidates(conn, word: str) -> list[dict]:
@@ -357,7 +468,11 @@ def find_clip(
     diction: float = 0.0,
     emotion: float = 0.0,
     granularity: float = 0.0,
-) -> dict | list[dict] | None:
+    defer: bool = False,
+) -> dict | list[dict] | tuple[dict, ...] | None:
+    """One word's clip: a row, a stitched list of sub-word rows, or None.
+    With `defer`, a whole-word match returns its candidate_pool as a tuple
+    instead of a pick, for the viterbi selector to choose from."""
     if granularity < 0 and rng is not None and rng.random() < abs(granularity):
         stitched = stitch_syllables(conn, word, rng, nth, diction=diction, emotion=emotion,
                                      granularity=granularity)
@@ -366,6 +481,8 @@ def find_clip(
 
     rows = _candidates(conn, word)
     if rows:
+        if defer:
+            return tuple(candidate_pool(rows))
         return _pick(rows, rng, nth, diction=diction, emotion=emotion)
     stitched = stitch_syllables(conn, word, rng, nth, diction=diction, emotion=emotion,
                                  granularity=granularity)
@@ -404,7 +521,15 @@ def match_text(
     granularity: float = 0.0,
     diction: float = 0.0,
     emotion: float = 0.0,
+    selector: str = "greedy",
+    smooth: float = 1.0,
+    continuity: float = 0.0,
 ) -> list[tuple[str, dict | list[dict] | None]]:
+    """Pick a clip per token. `greedy` picks each word on its own; `viterbi`
+    makes the same structural draws (phrase/stitch gates, sub-word picks) and
+    then chooses every free whole-word clip at once (_select_viterbi)."""
+    if selector not in ("greedy", "viterbi"):
+        raise ValueError(f"unknown selector: {selector!r}")
     tokens = tokenize(text)
     overrides = nth_overrides or {}
     results: list[tuple[str, dict | list[dict] | None]] = []
@@ -431,12 +556,15 @@ def match_text(
                 continue
 
         clip = find_clip(conn, token, rng=rng, nth=nth, diction=diction, emotion=emotion,
-                          granularity=granularity)
+                          granularity=granularity,
+                          defer=selector == "viterbi" and nth is None)
         if nth and clip and isinstance(clip, dict):
             print(f"    [nth={nth}] '{token}' → id={clip['id']}")
         results.append((token, clip))
         i += 1
 
+    if selector == "viterbi":
+        return _select_viterbi(results, rng, diction, emotion, smooth, continuity)
     return results
 
 
