@@ -171,9 +171,6 @@ def _assemble(render: dict) -> None:
     adj  = _adj_from_words(render["words"])
     audio, words = assemble.assemble(render["matches"], p["corpus"], adjustments=adj)
     assemble.write_wav(audio, wav)
-    conn = _conn()
-    render["corpus_hash"] = manifest.corpus_hash(conn)
-    conn.close()
     render["manifest_words"] = words
     render["wav_path"]   = str(wav)
     render["duration_s"] = round(len(audio) / assemble.SAMPLE_RATE, 2)
@@ -539,10 +536,13 @@ def api_manifest(render_id: str):
          "swaps": swaps.get(i, 0), "rerolls": rerolls.get(i, 0)}
         for i, w in enumerate(render["words"])
     ]
+    conn = _conn()
+    corpus_hash = manifest.corpus_hash(conn)
+    conn.close()
     return manifest.build_manifest(
         render["text"], render["manifest_words"], Path(render["wav_path"]),
         seed=render["seed"], controls={**render["criteria"], "nth": {}},
-        corpus_hash=render["corpus_hash"], token_state=state,
+        corpus_hash=corpus_hash, token_state=state,
     )
 
 

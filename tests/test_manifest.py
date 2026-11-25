@@ -58,6 +58,10 @@ def test_cli_manifest_has_every_v2_field(run_cli, tmp_path, text, extra):
         "nth":         nth,
     }
 
+    if nth:
+        # "of" must start its own unit, so its rank is really recorded, not None == None.
+        assert [w["nth"] for w in m["words"] if (w.get("tokens") or [w["token"]])[0] == "of"] == [2]
+
     for u, w in enumerate(m["words"]):
         assert w.keys() >= V2_WORD_KEYS, w["token"]
         first_token = (w.get("tokens") or [w["token"]])[0]
@@ -179,3 +183,55 @@ def test_corpus_hash_ignores_ingest_time(own_db_cli):
     conn.commit()
     assert manifest.corpus_hash(conn) != before
     conn.close()
+
+
+def _edit_manifest(path: Path, edit) -> None:
+    m = json.loads(path.read_text())
+    edit(m)
+    path.write_text(json.dumps(m))
+
+
+def _no_fragments(m: dict) -> None:
+    m["words"][-1]["fragments"] = []
+
+
+def _short_phrase(m: dict) -> None:
+    m["words"][0]["fragments"].pop()
+
+
+@pytest.mark.parametrize(("edit", "expected"), [
+    pytest.param(_no_fragments, "is found but has no fragments", id="found-without-fragments"),
+    pytest.param(_short_phrase, "has 4 tokens but 3 fragments", id="phrase-count-mismatch"),
+])
+def test_replay_refuses_malformed_manifest(run_cli, tmp_path, edit, expected):
+    text, extra = CASES[0].values
+    original = _render(run_cli, tmp_path / "r.wav", text, *extra)
+    assert original["words"][0]["fragments"][0]["tier"] == "phrase"
+    assert len(original["words"][0]["tokens"]) == 4
+    _edit_manifest(tmp_path / "r.manifest.json", edit)
+
+    code, out = _replay(run_cli, tmp_path / "r.manifest.json", tmp_path / "p.wav")
+    assert code != 0
+    assert "malformed manifest:" in out and expected in out
+    assert not (tmp_path / "p.wav").exists()
+
+
+def test_non_default_gap_round_trips_exactly(run_cli, tmp_path):
+    text, extra = CASES[1].values
+    _render(run_cli, tmp_path / "r.wav", text, *extra)
+    odd_gap = 1601 / 16000  # one sample past the default; rounding to 4 decimals gives 1602
+
+    def set_gap(m):
+        m["words"][1]["gap"] = odd_gap
+
+    _edit_manifest(tmp_path / "r.manifest.json", set_gap)
+
+    code, out = _replay(run_cli, tmp_path / "r.manifest.json", tmp_path / "p.wav")
+    assert code == 0, out
+    first = json.loads((tmp_path / "p.manifest.json").read_text())
+    assert first["words"][1]["gap"] == odd_gap
+    assert round(first["words"][1]["gap"] * 16000) == 1601
+
+    code, out = _replay(run_cli, tmp_path / "p.manifest.json", tmp_path / "q.wav")
+    assert code == 0, out
+    assert (tmp_path / "q.wav").read_bytes() == (tmp_path / "p.wav").read_bytes()

@@ -243,7 +243,8 @@ def assemble(
         gap_n = round(adj.get(i, {}).get("gap", default_gap) * SAMPLE_RATE)
         if gap_n > 0:
             parts.append(np.zeros(gap_n, dtype=np.float32))
-        gap = round(gap_n / SAMPLE_RATE, 4)
+        # Unrounded so replay recovers the exact sample count.
+        gap = gap_n / SAMPLE_RATE
 
         if len(rows_u) > 1:
             token    = " ".join(tokens_u)
@@ -299,7 +300,7 @@ def assemble(
             missing_n = round(word_adj.get("gap_s", MISSING_GAP / SAMPLE_RATE) * SAMPLE_RATE)
             parts.append(np.zeros(missing_n, dtype=np.float32))
             manifest_words.append(
-                {"token": token, "found": False, "gap_s": round(missing_n / SAMPLE_RATE, 3),
+                {"token": token, "found": False, "gap_s": missing_n / SAMPLE_RATE,
                  "speed": word_adj.get("speed", 1.0), "pitch": word_adj.get("pitch", 0.0),
                  "gap": gap, "fragments": []}
             )

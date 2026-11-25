@@ -21,7 +21,7 @@ Fields added to each `words` entry in v2 (the v1 per-word fields are kept as the
   rerolls    Times the word was rerolled (summed over a phrase).
   speed      Time-stretch factor, >1 is faster.
   pitch      Pitch shift in semitones.
-  gap        Seconds of silence inserted before this unit.
+  gap        Seconds of silence inserted before this unit, unrounded (samples / 16000).
   fragments  Clip instances in playback order, each {tier, instance_id}; tier is
              phrase, word, syllable or phone, and instance_id is the row id in the
              matching *_instances table. Syllable and phone fragments also carry
@@ -136,12 +136,32 @@ def replay_inputs(
         token_state += [{} for _ in tokens[1:]]
         if not w["found"]:
             adjustments[i]["gap_s"] = w["gap_s"]
+        _check_unit(u, w, tokens)
         rows = _fetch_fragments(conn, w["fragments"], missing) if w["found"] else None
         matches += _unit_matches(tokens, w["fragments"], rows, phrase_id=u + 1)
 
     if missing:
         raise ReplayError("manifest names instances that are no longer in the DB: " + ", ".join(missing))
     return matches, adjustments, token_state
+
+
+def _check_unit(u: int, w: dict, tokens: list[str]) -> None:
+    """Reject recorded units that cannot be rebuilt as written."""
+    frags = w["fragments"]
+    if not w["found"]:
+        if frags:
+            raise ReplayError(f"malformed manifest: word {u} ({w['token']!r}) is a gap but has fragments")
+        return
+    if not frags:
+        raise ReplayError(f"malformed manifest: word {u} ({w['token']!r}) is found but has no fragments")
+    tiers = {f["tier"] for f in frags}
+    if not tiers <= _TIER_TABLE.keys() or (len(tiers) > 1 and tiers & {"phrase", "word"}):
+        raise ReplayError(f"malformed manifest: word {u} ({w['token']!r}) has fragment tiers {sorted(tiers)}")
+    if "phrase" in tiers and len(frags) != len(tokens):
+        raise ReplayError(f"malformed manifest: phrase {u} ({w['token']!r}) has {len(tokens)} tokens "
+                          f"but {len(frags)} fragments")
+    if "word" in tiers and len(frags) != 1:
+        raise ReplayError(f"malformed manifest: word {u} ({w['token']!r}) has {len(frags)} word fragments")
 
 
 _GETTERS = {"word": index.get_word_instance, "syllable": index.get_syllable_instance,

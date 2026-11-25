@@ -149,7 +149,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
         sys.exit(f"Error: {exc}")
     except (KeyError, TypeError, AttributeError) as exc:
         conn.close()
-        sys.exit(f"Error: malformed manifest {src}: {exc!r}")
+        sys.exit(f"Error: malformed manifest: {src}: {exc!r}")
 
     current_hash = manifest.corpus_hash(conn)
     conn.close()
