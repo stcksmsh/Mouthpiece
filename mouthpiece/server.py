@@ -304,6 +304,7 @@ def api_swap(render_id: str, word_index: int, req: SwapRequest):
         raise HTTPException(404, f"word_instance {req.word_instance_id} not found")
     token  = render["matches"][word_index][0]
     old_w  = render["words"][word_index]
+    _break_phrase(render, word_index)
     _count_swap(render, word_index)
     render["matches"][word_index] = (token, row)
     render["words"][word_index]   = _row_to_word(
@@ -314,6 +315,19 @@ def api_swap(render_id: str, word_index: int, req: SwapRequest):
     )
     _assemble(render)
     return _render_response(render)
+
+
+def _break_phrase(render: dict, idx: int) -> None:
+    """Drop phrase grouping around idx so assembly cuts each member by its own clip
+    (assemble treats a phrase run as one cut and would ignore a swapped member)."""
+    row = render["matches"][idx][1]
+    if not (isinstance(row, dict) and row.get("phrase_id") is not None):
+        return
+    start = idx - row["phrase_pos"]
+    for k in range(start, start + row["phrase_len"]):
+        tok, member = render["matches"][k]
+        render["matches"][k] = (tok, {**member, "phrase_id": None, "phrase_pos": None, "phrase_len": None})
+        render["words"][k].update(phrase_id=None, phrase_pos=None, phrase_len=None)
 
 
 def _count_swap(render: dict, idx: int) -> None:
