@@ -1,5 +1,6 @@
 """tools/backfill_attribution.py against small fixture DBs."""
 
+import csv
 import sqlite3
 import subprocess
 import sys
@@ -10,10 +11,10 @@ import pytest
 from mouthpiece import index
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "backfill_attribution.py"
-HEADER = "filename,speaker,author,reader,uploader,source_label,licence_url,lang\n"
+HEADER = "filename,speaker,author,reader,uploader,source_label,licence_url,lang,tier\n"
 TABLE = HEADER + (
-    "nasa.wav,,,,,NASA Audio,,en\n"
-    "book.wav,Ezwa,Jules Lermina,Ezwa,,LibriVox,,fr\n"
+    "nasa.wav,,,,,NASA Audio,,en,unverified\n"
+    "book.wav,Ezwa,Jules Lermina,Ezwa,,LibriVox,,fr,clean\n"
 )
 
 # The pre-S0.7 `sources` table, as the real DB still has it.
@@ -98,7 +99,7 @@ def test_second_run_changes_nothing(db, table):
 
 def test_email_in_csv_refuses_and_writes_nothing(db, tmp_path):
     bad = tmp_path / "bad.csv"
-    bad.write_text(TABLE + "other.wav,,,,someone@example.org,,,en\n")
+    bad.write_text(TABLE + "other.wav,,,,someone@example.org,,,en,clean\n")
     before = sources(db)
     result = run(db, bad)
     assert result.returncode != 0
@@ -108,7 +109,7 @@ def test_email_in_csv_refuses_and_writes_nothing(db, tmp_path):
 
 def test_unknown_filename_skipped_with_warning(db, tmp_path):
     extra = tmp_path / "extra.csv"
-    extra.write_text(TABLE + "missing.wav,Someone,,,,,,en\n")
+    extra.write_text(TABLE + "missing.wav,Someone,,,,,,en,clean\n")
     result = run(db, extra)
     assert result.returncode == 0
     assert "warning: missing.wav: not in db, skipped" in result.stderr
@@ -129,7 +130,7 @@ def test_dry_run_writes_nothing(db, table):
 
 def test_duplicate_filename_refuses_and_writes_nothing(db, tmp_path):
     dup = tmp_path / "dup.csv"
-    dup.write_text(TABLE + "book.wav,Someone Else,,,,,,en\n")
+    dup.write_text(TABLE + "book.wav,Someone Else,,,,,,en,clean\n")
     before = db.read_bytes()
     result = run(db, dup)
     assert result.returncode != 0
@@ -175,3 +176,37 @@ def test_old_schema_migrated_and_backfilled(tmp_path, table):
     assert row["author"] == "Jules Lermina"
     assert row["speaker"] == "Ezwa"
     assert row["lang"] == "fr"
+    assert row["tier"] == "clean"
+
+
+def test_applies_tier(db, table):
+    assert run(db, table).returncode == 0
+    rows = sources(db)
+    assert rows["nasa.wav"]["tier"] == "unverified"
+    assert rows["book.wav"]["tier"] == "clean"
+    assert rows["other.wav"]["tier"] is None
+
+
+@pytest.mark.parametrize("tier", ["Restricted", "public", "clean "])
+def test_bad_tier_refuses_and_writes_nothing(db, tmp_path, tier):
+    bad = tmp_path / "bad.csv"
+    bad.write_text(TABLE + f"other.wav,Winston Churchill,,,,,,en,{tier}\n")
+    before = db.read_bytes()
+    result = run(db, bad)
+    assert result.returncode != 0
+    assert "tier must be one of" in result.stderr
+    assert db.read_bytes() == before
+
+
+def test_repo_table_has_decided_tiers():
+    with (TOOL.parents[1] / "corpus" / "attribution.csv").open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 34
+    expected = {"LibriVox": "clean", "NASA Audio": "unverified", "Supreme Court oral argument": "unverified"}
+    for r in rows:
+        if r["filename"].startswith("winston_churchill"):
+            assert r["tier"] == "restricted", r["filename"]
+        elif r["filename"].startswith("barack_obama"):
+            assert r["tier"] == "clean", r["filename"]
+        else:
+            assert r["tier"] == expected[r["source_label"]], r["filename"]

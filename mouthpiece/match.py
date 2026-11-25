@@ -6,6 +6,8 @@ import re
 
 import numpy as np
 
+from .index import DEFAULT_FILTER, SourceFilter
+
 TOP_K = 8           # candidate pool size for weighted random selection
 MIN_CONF = 0.35     # clips below this confidence are excluded from the pool
 BIAS_K = 3.0        # exponent sharpness for diction/emotion reweighting
@@ -221,20 +223,21 @@ def _select_viterbi(
             for (tok, clip), k in zip(results, path, strict=True)]
 
 
-def _candidates(conn, word: str) -> list[dict]:
+def _candidates(conn, word: str, source_filter: SourceFilter = DEFAULT_FILTER) -> list[dict]:
     from . import index, phonemes
-    rows = index.search_word(conn, word, limit=TOP_K + 5)
+    rows = index.search_word(conn, word, limit=TOP_K + 5, source_filter=source_filter)
     if rows:
         return rows
     for variant in phonemes.suffix_variants(word):
-        rows = index.search_word(conn, variant, limit=TOP_K + 5)
+        rows = index.search_word(conn, variant, limit=TOP_K + 5, source_filter=source_filter)
         if rows:
             print(f"    [lemma fallback] '{word}' → '{variant}'")
             return rows
     return []
 
 
-def _resolve_groups(conn, word: str, search_fn) -> list[list[str]] | None:
+def _resolve_groups(conn, word: str, search_fn,
+                    source_filter: SourceFilter = DEFAULT_FILTER) -> list[list[str]] | None:
     """Find any way to tile `word`'s CMUdict pronunciation into contiguous
     phone spans that each have at least one corpus candidate under `search_fn`
     (index.search_syllable or index.search_phone) — a word-break-style search
@@ -264,7 +267,7 @@ def _resolve_groups(conn, word: str, search_fn) -> list[list[str]] | None:
     def ok(i: int, j: int) -> bool:
         if (i, j) not in span_ok:
             span_ok[(i, j)] = bool(
-                search_fn(conn, phonemes.phone_key(phones[i:j]), 1)
+                search_fn(conn, phonemes.phone_key(phones[i:j]), 1, source_filter=source_filter)
             )
         return span_ok[(i, j)]
 
@@ -297,6 +300,7 @@ def _find_natural_run(
     search_fn,
     next_fn,
     max_len: int = MAX_PHRASE_LEN,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> list[dict] | None:
     """Find the longest run of consecutive target groups starting at
     `start_idx` that also occur consecutively (within a small gap) in one
@@ -308,7 +312,7 @@ def _find_natural_run(
     # Wide pool on purpose: we're hunting for a rare coincidental continuation,
     # not picking the single best individual candidate (that's _pick()'s job) —
     # a seed with a useful next-unit match can rank well outside TOP_K.
-    seed_rows = search_fn(conn, phonemes.phone_key(groups[start_idx]), 50)
+    seed_rows = search_fn(conn, phonemes.phone_key(groups[start_idx]), 50, source_filter=source_filter)
     if not seed_rows:
         return None
 
@@ -318,7 +322,7 @@ def _find_natural_run(
         current = seed
         j = start_idx + 1
         while j < len(groups) and (j - start_idx) < max_len:
-            nxt = next_fn(conn, current["id"])
+            nxt = next_fn(conn, current["id"], source_filter=source_filter)
             if nxt is None or nxt["phone_key"] != phonemes.phone_key(groups[j]):
                 break
             run.append(nxt)
@@ -339,6 +343,7 @@ def _stitch_at_unit(
     nth: int | None,
     diction: float,
     emotion: float,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> tuple[list[dict], int] | None:
     """Resolve+stitch `word` at one granularity (syllable or phone, per
     search_fn/next_fn). Returns (picks, segment_count) — segment_count is the
@@ -346,7 +351,7 @@ def _stitch_at_unit(
     compare granularities — or None if infeasible at this granularity."""
     from . import phonemes
 
-    groups = _resolve_groups(conn, word, search_fn)
+    groups = _resolve_groups(conn, word, search_fn, source_filter)
     if groups is None:
         return None
 
@@ -355,7 +360,7 @@ def _stitch_at_unit(
     segment_count = 0
     i, n = 0, len(groups)
     while i < n:
-        run = _find_natural_run(conn, groups, i, search_fn, next_fn)
+        run = _find_natural_run(conn, groups, i, search_fn, next_fn, source_filter=source_filter)
         if run:
             run_counter += 1
             rlen = len(run)
@@ -367,7 +372,7 @@ def _stitch_at_unit(
             continue
 
         key  = phonemes.phone_key(groups[i])
-        rows = search_fn(conn, key, TOP_K + 5)
+        rows = search_fn(conn, key, TOP_K + 5, source_filter=source_filter)
         if not rows:
             return None
         picks.append(_pick(rows, rng, nth, diction=diction, emotion=emotion))
@@ -384,6 +389,7 @@ def stitch_syllables(
     diction: float = 0.0,
     emotion: float = 0.0,
     granularity: float = 0.0,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> list[dict] | None:
     """Stitch `word` from sub-word corpus fragments, preferring natural
     multi-unit runs (_find_natural_run) — real, continuously-spoken corpus
@@ -404,7 +410,7 @@ def stitch_syllables(
     if granularity < PHONEME_FORCE_THRESHOLD:
         forced = _stitch_at_unit(
             conn, word, index.search_phone, index.next_phone_instance,
-            rng, nth, diction, emotion,
+            rng, nth, diction, emotion, source_filter,
         )
         if forced is None:
             return None
@@ -413,11 +419,11 @@ def stitch_syllables(
 
     syll  = _stitch_at_unit(
         conn, word, index.search_syllable, index.next_syllable_instance,
-        rng, nth, diction, emotion,
+        rng, nth, diction, emotion, source_filter,
     )
     phone = _stitch_at_unit(
         conn, word, index.search_phone, index.next_phone_instance,
-        rng, nth, diction, emotion,
+        rng, nth, diction, emotion, source_filter,
     )
 
     if syll is None and phone is None:
@@ -442,13 +448,14 @@ def find_phrase(
     start_idx: int,
     rng: np.random.Generator | None = None,
     max_len: int = MAX_PHRASE_LEN,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> list[dict] | None:
     """Find the longest run of consecutive tokens starting at `start_idx` that
     also occur consecutively (within a small gap) in one source recording.
     Returns the raw word_instance rows for the run (>=2 words), or None."""
     from . import index
 
-    seed_rows = _candidates(conn, tokens[start_idx])
+    seed_rows = _candidates(conn, tokens[start_idx], source_filter)
     if not seed_rows:
         return None
 
@@ -458,7 +465,7 @@ def find_phrase(
         current = seed
         j = start_idx + 1
         while j < len(tokens) and (j - start_idx) < max_len:
-            nxt = index.next_word_instance(conn, current["id"])
+            nxt = index.next_word_instance(conn, current["id"], source_filter=source_filter)
             if nxt is None or nxt["word"] != tokens[j]:
                 break
             run.append(nxt)
@@ -479,23 +486,24 @@ def find_clip(
     emotion: float = 0.0,
     granularity: float = 0.0,
     defer: bool = False,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> dict | list[dict] | tuple[dict, ...] | None:
     """One word's clip: a row, a stitched list of sub-word rows, or None.
     With `defer`, a whole-word match returns its candidate_pool as a tuple
     instead of a pick, for the viterbi selector to choose from."""
     if granularity < 0 and rng is not None and rng.random() < abs(granularity):
         stitched = stitch_syllables(conn, word, rng, nth, diction=diction, emotion=emotion,
-                                     granularity=granularity)
+                                     granularity=granularity, source_filter=source_filter)
         if stitched:
             return stitched
 
-    rows = _candidates(conn, word)
+    rows = _candidates(conn, word, source_filter)
     if rows:
         if defer:
             return tuple(candidate_pool(rows))
         return _pick(rows, rng, nth, diction=diction, emotion=emotion)
     stitched = stitch_syllables(conn, word, rng, nth, diction=diction, emotion=emotion,
-                                 granularity=granularity)
+                                 granularity=granularity, source_filter=source_filter)
     if stitched:
         print(f"    [stitch] '{word}' → {len(stitched)} unit(s)")
     return stitched
@@ -506,16 +514,19 @@ def find_clip_near_pitch(
     word: str,
     target_f0_hz: float,
     exclude_id: int | None = None,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> dict | None:
     """Return the clip for `word` whose f0_mean is closest to target_f0_hz."""
     from . import index, phonemes
-    rows = index.search_word_by_pitch(conn, word, target_f0_hz, limit=TOP_K + 5)
+    rows = index.search_word_by_pitch(conn, word, target_f0_hz, limit=TOP_K + 5,
+                                      source_filter=source_filter)
     if exclude_id is not None:
         rows = [r for r in rows if r["id"] != exclude_id] or rows
     if rows:
         return rows[0]
     for variant in phonemes.suffix_variants(word):
-        rows = index.search_word_by_pitch(conn, variant, target_f0_hz, limit=TOP_K + 5)
+        rows = index.search_word_by_pitch(conn, variant, target_f0_hz, limit=TOP_K + 5,
+                                          source_filter=source_filter)
         if exclude_id is not None:
             rows = [r for r in rows if r["id"] != exclude_id] or rows
         if rows:
@@ -534,10 +545,12 @@ def match_text(
     selector: str = "greedy",
     smooth: float = 1.0,
     continuity: float = 0.0,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> list[tuple[str, dict | list[dict] | None]]:
     """Pick a clip per token. `greedy` picks each word on its own; `viterbi`
     makes the same structural draws (phrase/stitch gates, sub-word picks) and
-    then chooses every free whole-word clip at once (_select_viterbi)."""
+    then chooses every free whole-word clip at once (_select_viterbi). Every
+    clip comes from a source `source_filter` allows; a word with none is None."""
     if selector not in ("greedy", "viterbi"):
         raise ValueError(f"unknown selector: {selector!r}")
     tokens = tokenize(text)
@@ -552,7 +565,7 @@ def match_text(
         nth = overrides.get(token)
 
         if granularity > 0 and rng is not None and nth is None and rng.random() < granularity:
-            run = find_phrase(conn, tokens, i, rng=rng)
+            run = find_phrase(conn, tokens, i, rng=rng, source_filter=source_filter)
             if run:
                 phrase_counter += 1
                 plen = len(run)
@@ -567,7 +580,8 @@ def match_text(
 
         clip = find_clip(conn, token, rng=rng, nth=nth, diction=diction, emotion=emotion,
                           granularity=granularity,
-                          defer=selector == "viterbi" and nth is None)
+                          defer=selector == "viterbi" and nth is None,
+                          source_filter=source_filter)
         if nth and clip and isinstance(clip, dict):
             print(f"    [nth={nth}] '{token}' → id={clip['id']}")
         results.append((token, clip))

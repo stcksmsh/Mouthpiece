@@ -4,7 +4,8 @@
 
 Rows are matched by filename. Every CSV column other than `filename` is written to
 the source row; an empty cell means NULL. Prints one line per changed row. A CSV
-cell containing "@" (an email) stops the run before anything is written.
+cell containing "@" (an email), or a `tier` other than clean, unverified or
+restricted, stops the run before anything is written.
 """
 
 import argparse
@@ -17,9 +18,9 @@ from pathlib import Path
 # Run as a script from any directory: make the repo's `mouthpiece` package importable.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mouthpiece.index import get_connection
+from mouthpiece.index import check_tier, get_connection
 
-FIELDS = ("speaker", "author", "reader", "uploader", "source_label", "licence_url", "lang")
+FIELDS = ("speaker", "author", "reader", "uploader", "source_label", "licence_url", "lang", "tier")
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+")
 
 
@@ -39,6 +40,10 @@ def read_table(path: Path) -> dict[str, dict]:
             if row["filename"] in table:
                 raise ValueError(f"{path}:{line}: duplicate filename {row['filename']}")
             table[row["filename"]] = {k: row[k] or None for k in FIELDS}
+            try:
+                check_tier(table[row["filename"]]["tier"])
+            except ValueError as exc:
+                raise ValueError(f"{path}:{line}: {exc}") from None
     return table
 
 

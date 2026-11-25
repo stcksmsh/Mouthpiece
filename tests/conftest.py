@@ -18,11 +18,30 @@ FIXTURES = Path(__file__).parent / "fixtures"
 FIXTURE = "obama_20170114_0-8s"
 
 
-def build_fixture_db(root: Path) -> dict[str, str]:
-    """Index the fixture under `root` and return the env vars that point the CLI at it."""
+def index_units(conn, source_id: int) -> None:
+    """Add syllable and phone rows for every word of one source, as ingest does."""
     from mouthpiece import index, phonemes
 
-    data = json.loads((FIXTURES / f"{FIXTURE}.json").read_text())
+    for row in conn.execute(
+        "SELECT id, word, start_s, end_s FROM word_instances WHERE source_id=?", (source_id,)
+    ).fetchall():
+        sylls = phonemes.compute_syllable_rows(row["word"], row["start_s"], row["end_s"])
+        if sylls:
+            index.insert_syllable_instances(conn, row["id"], sylls)
+        phones = phonemes.compute_phone_rows(row["word"], row["start_s"], row["end_s"])
+        if phones:
+            index.insert_phone_instances(conn, row["id"], phones)
+
+
+def fixture_data() -> dict:
+    return json.loads((FIXTURES / f"{FIXTURE}.json").read_text())
+
+
+def build_fixture_db(root: Path) -> dict[str, str]:
+    """Index the fixture under `root` and return the env vars that point the CLI at it."""
+    from mouthpiece import index
+
+    data = fixture_data()
     corpus = root / "corpus"
     corpus.mkdir(parents=True)
     shutil.copy(FIXTURES / f"{FIXTURE}.wav", corpus / data["source"]["filename"])
@@ -30,13 +49,7 @@ def build_fixture_db(root: Path) -> dict[str, str]:
     conn = index.get_connection(root / "db" / "mouthpiece.db")
     source_id = index.insert_source(conn, **data["source"])
     index.insert_word_instances(conn, source_id, data["words"])
-    for row in conn.execute("SELECT id, word, start_s, end_s FROM word_instances").fetchall():
-        sylls = phonemes.compute_syllable_rows(row["word"], row["start_s"], row["end_s"])
-        if sylls:
-            index.insert_syllable_instances(conn, row["id"], sylls)
-        phones = phonemes.compute_phone_rows(row["word"], row["start_s"], row["end_s"])
-        if phones:
-            index.insert_phone_instances(conn, row["id"], phones)
+    index_units(conn, source_id)
     conn.close()
 
     return {
