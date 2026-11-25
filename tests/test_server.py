@@ -148,3 +148,68 @@ def test_manifest_tracks_swap_reroll_and_lock_and_replays(run_cli, tmp_path):
     replayed = json.loads((tmp_path / "again.manifest.json").read_text())
     assert [w["fragments"] for w in replayed["words"]] == [w["fragments"] for w in m["words"]]
     assert [w["locked"] for w in replayed["words"]] == [False, False, True]
+
+
+def _phrase_render(text):
+    r = server.api_render(server.RenderRequest(text=text, seed=3, granularity=0.9))
+    n = len(text.split())
+    assert [(w["phrase_pos"], w["phrase_len"]) for w in r["words"]] == [(i, n) for i in range(n)]
+    return r
+
+
+def _frags(m):
+    return [f for w in m["words"] for f in w["fragments"]]
+
+
+def _other_instance(taken):
+    from mouthpiece import index
+    conn = index.get_connection(server._paths()["db"])
+    other = next(c["id"] for c in index.search_word(conn, "address") if c["id"] not in taken)
+    conn.close()
+    return other
+
+
+def _swap_and_check(text, idx, run_cli, tmp_path):
+    r = _phrase_render(text)
+    before = _frags(server.api_manifest(r["id"]))
+    assert {f["tier"] for f in before} == {"phrase"}
+    other = _other_instance({f["instance_id"] for f in before})
+
+    r = server.api_swap(r["id"], idx, server.SwapRequest(word_instance_id=other))
+    assert all(w["phrase_id"] is None for w in r["words"])
+    m = server.api_manifest(r["id"])
+    after = _frags(m)
+    assert after[idx] == {"tier": "word", "instance_id": other}
+    # The phrase is no longer one cut, so the untouched members are plain words now.
+    for k, f in enumerate(after):
+        if k != idx:
+            assert f == {"tier": "word", "instance_id": before[k]["instance_id"]}
+
+    path = tmp_path / "swap.manifest.json"
+    path.write_text(json.dumps(m))
+    code, out = run_cli("replay", str(path), "-o", str(tmp_path / "again.wav"))
+    assert code == 0, out
+    replayed = json.loads((tmp_path / "again.manifest.json").read_text())
+    assert _frags(replayed) == after
+
+
+@pytest.mark.usefixtures("env")
+@pytest.mark.parametrize("idx", [0, 1, 2], ids=["first", "middle", "last"])
+def test_swap_member_of_three_word_phrase(idx, run_cli, tmp_path):
+    _swap_and_check("my final farewell", idx, run_cli, tmp_path)
+
+
+@pytest.mark.usefixtures("env")
+@pytest.mark.parametrize("idx", [0, 1])
+def test_swap_member_of_two_word_phrase(idx, run_cli, tmp_path):
+    _swap_and_check("final farewell", idx, run_cli, tmp_path)
+
+
+@pytest.mark.usefixtures("env")
+def test_swap_then_reroll_same_phrase_word():
+    r = _phrase_render("my final farewell")
+    other = _other_instance({w["word_instance_id"] for w in r["words"]})
+    server.api_swap(r["id"], 1, server.SwapRequest(word_instance_id=other))
+    r = server.api_reroll(r["id"], 1)
+    assert r["words"][1]["word_instance_id"] is not None
+    assert [f["tier"] for f in _frags(server.api_manifest(r["id"]))] == ["word"] * 3
