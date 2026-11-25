@@ -113,7 +113,7 @@ def normalize_and_write(item: Item, done_paths: set) -> bool:
             with open(raw, "wb") as f:
                 for chunk in r.iter_content(1 << 16):
                     f.write(chunk)
-    except Exception as e:
+    except (requests.RequestException, OSError) as e:
         print(f"  ! download failed: {e}")
         return False
     try:
