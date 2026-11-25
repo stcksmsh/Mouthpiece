@@ -196,6 +196,27 @@ def test_voa_feed_yields_labelled_items_without_speaker(monkeypatch):
     assert row["licence_url"] == "https://www.voanews.com/p/5338.html"
 
 
+class _BodyFeed:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+
+@pytest.mark.parametrize("body, reason", [
+    (_VOA_FEED + b" " * (10 * 1024 * 1024), "over"),
+    (_VOA_FEED.replace(b"<rss", b'<!DOCTYPE rss [<!ENTITY a "aaaa">]><rss', 1), "entities"),
+])
+def test_rss_feed_refuses_oversized_or_entity_bodies(monkeypatch, capsys, body, reason):
+    monkeypatch.setattr(harvest.requests, "get", lambda *_a, **_k: _BodyFeed(body))
+
+    assert list(harvest.SOURCES["voa"]()) == []
+    out = capsys.readouterr().out
+    assert "feed refused" in out
+    assert reason in out
+
+
 def test_old_header_batch_file_is_refused_untouched(tmp_path, monkeypatch, capsys):
     batch = tmp_path / "batch.csv"
     old = "file,speaker,date,event,source_url,license\ncorpus/a.wav,X,,E,u,public domain\n"

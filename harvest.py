@@ -45,6 +45,7 @@ MANIFEST = "corpus/batch.csv"          # ingest manifest, columns below
 FIELDS = ["file", "speaker", "date", "event", "source_url", "license",
           "tier", "licence_url", "author", "source_label"]
 TIERS = ("clean", "restricted", "unverified")
+FEED_MAX_BYTES = 10 * 1024 * 1024
 UA = {"User-Agent": "Mozilla/5.0 (mouthpiece-harvest; research)"}
 os.makedirs(OUT, exist_ok=True)
 
@@ -292,7 +293,14 @@ class RSSFeedAdapter:
         try:
             r = requests.get(self.feed_url, headers=UA, timeout=30)
             r.raise_for_status()
-            root = ET.fromstring(r.content)
+            body = r.content
+            # A podcast feed is a few MB at most; entity declarations are the
+            # vector for expansion attacks, which ElementTree does not refuse.
+            if len(body) > FEED_MAX_BYTES:
+                print(f"  ! feed refused {self.feed_url}: over {FEED_MAX_BYTES} bytes"); return
+            if b"<!ENTITY" in body:
+                print(f"  ! feed refused {self.feed_url}: declares XML entities"); return
+            root = ET.fromstring(body)
         except (requests.RequestException, ET.ParseError) as e:
             print(f"  ! feed failed {self.feed_url}: {e}"); return
         for it in root.iter("item"):
@@ -547,6 +555,7 @@ def voa():
     # reporters. The feed names no voice per episode, so speaker is "".
     # Evidence: VOA's terms state "All text, audio and video material
     # produced exclusively by the Voice of America is in the public domain."
+    # Episodes may hold unmarked third-party clips (AP/AFP/Reuters), so clean is per programme, not per file.
     return RSSFeedAdapter(
         "https://learningenglish.voanews.com/podcast/?zoneId=1689",
         event="VOA Learning English Podcast",
