@@ -3,7 +3,7 @@
 
 [commands]
 lint = "python3 -m compileall -q mouthpiece"
-test = ".venv/bin/python -m pytest -q"
+test = "sh -c '\"$(git rev-parse --git-common-dir)/../.venv/bin/python\" -m pytest -q'"
 clean = ""
 
 [slop]

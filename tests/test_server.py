@@ -1,5 +1,7 @@
 """Server handlers, called directly (no HTTP client dependency) against the fixture corpus."""
 
+import json
+
 import pytest
 
 from mouthpiece import server
@@ -114,3 +116,35 @@ def test_reaper_export_labels_unattributed_sources(unattributed_db, tmp_path):
     assert 'speaker="unidentified speaker, NASA"' in script
     assert "@" not in script
     assert "unknown" not in script
+
+
+def test_manifest_tracks_swap_reroll_and_lock_and_replays(run_cli, tmp_path):
+    from mouthpiece import index
+
+    r = _render()
+    current = _ids(r)[0]
+    conn = index.get_connection(server._paths()["db"])
+    other = next(c["id"] for c in index.search_word(conn, "to") if c["id"] != current)
+    conn.close()
+
+    server.api_swap(r["id"], 0, server.SwapRequest(word_instance_id=other))
+    rerolled = _ids(server.api_reroll(r["id"], 1))[1]
+    server.api_lock(r["id"], 2, server.LockRequest(locked=True))
+
+    m = server.api_manifest(r["id"])
+    assert m["schema_version"] == 2
+    assert m["controls"] == {"granularity": 0.0, "diction": 0.0, "emotion": 0.0, "nth": {}}
+    w0, w1, w2 = m["words"]
+    assert w0["fragments"] == [{"tier": "word", "instance_id": other}]
+    assert w1["fragments"] == [{"tier": "word", "instance_id": rerolled}]
+    assert (w0["swaps"], w0["rerolls"], w0["locked"]) == (1, 0, False)
+    assert (w1["swaps"], w1["rerolls"], w1["locked"]) == (0, 1, False)
+    assert (w2["swaps"], w2["rerolls"], w2["locked"]) == (0, 0, True)
+
+    path = tmp_path / "server.manifest.json"
+    path.write_text(json.dumps(m))
+    code, out = run_cli("replay", str(path), "-o", str(tmp_path / "again.wav"))
+    assert code == 0, out
+    replayed = json.loads((tmp_path / "again.manifest.json").read_text())
+    assert [w["fragments"] for w in replayed["words"]] == [w["fragments"] for w in m["words"]]
+    assert [w["locked"] for w in replayed["words"]] == [False, False, True]

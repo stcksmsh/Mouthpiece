@@ -6,6 +6,7 @@ audio, so tests exercise the real index and assembly code with no model download
 
 import json
 import shutil
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -70,16 +71,10 @@ def unattributed_db(tmp_path):
     return db
 
 
-@pytest.fixture
-def run_cli(corpus_env, monkeypatch, capsys):
-    """Run the `mouthpiece` CLI in-process against the fixture corpus.
-
-    Returns (exit_code, stdout). In-process keeps the suite fast: a subprocess
-    pays librosa's import cost on every call.
-    """
+def _cli_runner(env: dict[str, str], monkeypatch, capsys):
     from mouthpiece import cli
 
-    for key, value in corpus_env.items():
+    for key, value in env.items():
         monkeypatch.setenv(key, value)
 
     def run(*args: str) -> tuple[int, str]:
@@ -87,9 +82,34 @@ def run_cli(corpus_env, monkeypatch, capsys):
         capsys.readouterr()
         try:
             cli.main()
-            code = 0
+            code, message = 0, ""
         except SystemExit as exc:
             code = exc.code if isinstance(exc.code, int) else 1
-        return code, capsys.readouterr().out
+            # sys.exit("text") prints only when the interpreter exits; keep it visible here.
+            message = exc.code if isinstance(exc.code, str) else ""
+        return code, capsys.readouterr().out + message
 
     return run
+
+
+@pytest.fixture
+def run_cli(corpus_env, monkeypatch, capsys):
+    """Run the `mouthpiece` CLI in-process against the fixture corpus.
+
+    Returns (exit_code, stdout plus any sys.exit message). In-process keeps the
+    suite fast: a subprocess pays librosa's import cost on every call.
+    """
+    return _cli_runner(corpus_env, monkeypatch, capsys)
+
+
+@pytest.fixture
+def own_db_cli(corpus_env, tmp_path, monkeypatch, capsys):
+    """Like run_cli, but on a private copy of the fixture DB that the test may edit.
+    Returns (run, db_path)."""
+    db = tmp_path / "db" / "mouthpiece.db"
+    db.parent.mkdir()
+    src, dst = sqlite3.connect(corpus_env["MOUTHPIECE_DB"]), sqlite3.connect(db)
+    src.backup(dst)
+    src.close()
+    dst.close()
+    return _cli_runner({**corpus_env, "MOUTHPIECE_DB": str(db)}, monkeypatch, capsys), db
