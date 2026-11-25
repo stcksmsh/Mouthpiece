@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import numpy as np
-
 SAMPLE_RATE = 16_000
 
 _lemmatizer = None
@@ -33,73 +31,17 @@ def _lemmatize(word: str) -> str | None:
         return None
 
 
-def _spectral_tilt(clip: np.ndarray, sr: int) -> float | None:
-    """Log ratio of sub-1kHz energy to 1-4kHz energy — rough voice-quality proxy."""
-    try:
-        spec = np.abs(np.fft.rfft(clip))
-        freqs = np.fft.rfftfreq(len(clip), d=1.0 / sr)
-        low = spec[(freqs > 0) & (freqs < 1000)]
-        high = spec[(freqs >= 1000) & (freqs < 4000)]
-        low_e = float(np.sum(low ** 2))
-        high_e = float(np.sum(high ** 2))
-        if low_e <= 0 or high_e <= 0:
-            return None
-        return float(np.log(low_e / high_e))
-    except Exception:
-        return None
-
-
 def _compute_prosodics(audio_path: Path, words: list[dict]) -> list[dict]:
-    """Enrich word dicts with f0_mean/f0_var (Hz), rms, spectral_tilt, and lemma."""
+    """Enrich word dicts with lemma and the acoustic features from features.py."""
+    from . import features
+
     try:
-        import soundfile as sf
-        import librosa
-        audio, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
+        feats = features.for_file(audio_path, [(w["start"], w["end"]) for w in words])
     except Exception as exc:
+        # Rows keep NULL features; `mouthpiece features` fills them later.
         print(f"  Warning: could not load audio for prosodic analysis: {exc}")
-        return [
-            {**w, "f0_mean": None, "f0_var": None, "rms": None,
-             "spectral_tilt": None, "lemma": _lemmatize(w["word"])}
-            for w in words
-        ]
-
-    enriched = []
-    for w in words:
-        s = int(w["start"] * SAMPLE_RATE)
-        e = int(w["end"]   * SAMPLE_RATE)
-        clip = audio[max(0, s) : min(len(audio), e)]
-        lemma = _lemmatize(w["word"])
-
-        if len(clip) < 256:
-            enriched.append({
-                **w, "f0_mean": None, "f0_var": None, "rms": None,
-                "spectral_tilt": None, "lemma": lemma,
-            })
-            continue
-
-        rms = float(np.sqrt(np.mean(clip ** 2)))
-        tilt = _spectral_tilt(clip, SAMPLE_RATE)
-
-        try:
-            # frame_length must be < clip length; use a power-of-2 ≤ clip//4
-            fl = 1
-            while fl * 2 <= len(clip) // 4:
-                fl *= 2
-            fl = max(fl, 128)
-            f0 = librosa.yin(clip, fmin=65, fmax=500, sr=SAMPLE_RATE, frame_length=fl)
-            voiced = f0[(f0 > 65) & (f0 < 490)]
-            f0_mean = float(np.median(voiced)) if len(voiced) else None
-            f0_var = float(np.var(voiced)) if len(voiced) else None
-        except Exception:
-            f0_mean = None
-            f0_var = None
-
-        enriched.append({
-            **w, "f0_mean": f0_mean, "f0_var": f0_var, "rms": rms,
-            "spectral_tilt": tilt, "lemma": lemma,
-        })
-
-    return enriched
+        feats = [{"f0_mean": None, "f0_var": None, "rms": None, "spectral_tilt": None}] * len(words)
+    return [{**w, **f, "lemma": _lemmatize(w["word"])} for w, f in zip(words, feats, strict=True)]
 
 
 def _normalize_audio(src: Path, dst: Path) -> None:

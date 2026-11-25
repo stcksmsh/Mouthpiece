@@ -12,139 +12,231 @@
    "word": "this",
    "start": 0.642,
    "end": 0.822,
-   "confidence": 0.743
+   "confidence": 0.743,
+   "f0_mean": 432.5036,
+   "f0_var": 0.3633,
+   "rms": -20.6698,
+   "spectral_tilt": -1.1294
   },
   {
    "word": "week,",
    "start": 0.902,
    "end": 1.142,
-   "confidence": 0.957
+   "confidence": 0.957,
+   "f0_mean": 191.8972,
+   "f0_var": 0.0644,
+   "rms": -19.2825,
+   "spectral_tilt": -4.4047
   },
   {
    "word": "i",
    "start": 1.402,
    "end": 1.463,
-   "confidence": 0.986
+   "confidence": 0.986,
+   "f0_mean": null,
+   "f0_var": null,
+   "rms": -30.1192,
+   "spectral_tilt": -5.1476
   },
   {
    "word": "traveled",
    "start": 1.523,
    "end": 1.843,
-   "confidence": 0.72
+   "confidence": 0.72,
+   "f0_mean": 160.2046,
+   "f0_var": 0.358,
+   "rms": -22.2123,
+   "spectral_tilt": -5.2593
   },
   {
    "word": "to",
    "start": 1.883,
    "end": 1.943,
-   "confidence": 0.68
+   "confidence": 0.68,
+   "f0_mean": 138.5858,
+   "f0_var": 0.25,
+   "rms": -28.923,
+   "spectral_tilt": -1.1224
   },
   {
    "word": "chicago",
    "start": 1.963,
    "end": 2.443,
-   "confidence": 0.815
+   "confidence": 0.815,
+   "f0_mean": null,
+   "f0_var": null,
+   "rms": -28.7898,
+   "spectral_tilt": -2.0435
   },
   {
    "word": "to",
    "start": 2.783,
    "end": 2.883,
-   "confidence": 0.975
+   "confidence": 0.975,
+   "f0_mean": null,
+   "f0_var": null,
+   "rms": -35.9698,
+   "spectral_tilt": -4.7025
   },
   {
    "word": "deliver",
    "start": 2.943,
    "end": 3.264,
-   "confidence": 0.878
+   "confidence": 0.878,
+   "f0_mean": 136.5406,
+   "f0_var": 1.3048,
+   "rms": -25.9387,
+   "spectral_tilt": -7.8027
   },
   {
    "word": "my",
    "start": 3.304,
    "end": 3.424,
-   "confidence": 0.648
+   "confidence": 0.648,
+   "f0_mean": 114.5379,
+   "f0_var": 0.27,
+   "rms": -25.1424,
+   "spectral_tilt": -4.9238
   },
   {
    "word": "final",
    "start": 3.524,
    "end": 3.844,
-   "confidence": 0.878
+   "confidence": 0.878,
+   "f0_mean": 149.6647,
+   "f0_var": 0.1849,
+   "rms": -23.3738,
+   "spectral_tilt": -4.1601
   },
   {
    "word": "farewell",
    "start": 3.944,
    "end": 4.344,
-   "confidence": 0.792
+   "confidence": 0.792,
+   "f0_mean": 128.1834,
+   "f0_var": 0.5584,
+   "rms": -23.8349,
+   "spectral_tilt": -6.0381
   },
   {
    "word": "address",
    "start": 4.364,
    "end": 4.665,
-   "confidence": 0.861
+   "confidence": 0.861,
+   "f0_mean": 117.2284,
+   "f0_var": 0.0699,
+   "rms": -30.5999,
+   "spectral_tilt": -3.5469
   },
   {
    "word": "to",
    "start": 4.685,
    "end": 4.765,
-   "confidence": 0.633
+   "confidence": 0.633,
+   "f0_mean": 113.3714,
+   "f0_var": 0.1919,
+   "rms": -39.1023,
+   "spectral_tilt": -2.5354
   },
   {
    "word": "the",
    "start": 4.805,
    "end": 4.885,
-   "confidence": 0.834
+   "confidence": 0.834,
+   "f0_mean": 107.4457,
+   "f0_var": 0.04,
+   "rms": -34.8698,
+   "spectral_tilt": -6.4803
   },
   {
    "word": "nation,",
    "start": 4.925,
    "end": 5.225,
-   "confidence": 0.896
+   "confidence": 0.896,
+   "f0_mean": 96.5824,
+   "f0_var": 0.2025,
+   "rms": -38.3524,
+   "spectral_tilt": -1.1311
   },
   {
    "word": "following",
    "start": 5.825,
    "end": 6.145,
-   "confidence": 0.922
+   "confidence": 0.922,
+   "f0_mean": 116.7578,
+   "f0_var": 1.1673,
+   "rms": -28.2873,
+   "spectral_tilt": -6.3943
   },
   {
    "word": "in",
    "start": 6.186,
    "end": 6.226,
-   "confidence": 0.96
+   "confidence": 0.96,
+   "f0_mean": 125.2101,
+   "f0_var": 0.0025,
+   "rms": -31.9887,
+   "spectral_tilt": -8.0368
   },
   {
    "word": "the",
    "start": 6.266,
    "end": 6.326,
-   "confidence": 0.998
+   "confidence": 0.998,
+   "f0_mean": 125.5731,
+   "f0_var": 0.0067,
+   "rms": -37.0317,
+   "spectral_tilt": -6.1086
   },
   {
    "word": "tradition",
    "start": 6.366,
    "end": 6.746,
-   "confidence": 0.804
+   "confidence": 0.804,
+   "f0_mean": 124.0233,
+   "f0_var": 0.8324,
+   "rms": -33.7047,
+   "spectral_tilt": -1.802
   },
   {
    "word": "of",
    "start": 6.786,
    "end": 6.846,
-   "confidence": 0.75
+   "confidence": 0.75,
+   "f0_mean": 122.5119,
+   "f0_var": 0.2156,
+   "rms": -44.5793,
+   "spectral_tilt": -5.1545
   },
   {
    "word": "presidents",
    "start": 6.906,
    "end": 7.326,
-   "confidence": 0.874
+   "confidence": 0.874,
+   "f0_mean": 110.7603,
+   "f0_var": 1.3085,
+   "rms": -34.0853,
+   "spectral_tilt": -4.1799
   },
   {
    "word": "before",
    "start": 7.386,
    "end": 7.706,
-   "confidence": 0.78
+   "confidence": 0.78,
+   "f0_mean": 147.2287,
+   "f0_var": 3.8925,
+   "rms": -30.2408,
+   "spectral_tilt": -8.0433
   },
   {
    "word": "me.",
    "start": 7.746,
    "end": 7.847,
-   "confidence": 0.994
+   "confidence": 0.994,
+   "f0_mean": 86.2682,
+   "f0_var": 5.8022,
+   "rms": -39.903,
+   "spectral_tilt": -3.6847
   }
  ]
 }
