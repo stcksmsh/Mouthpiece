@@ -1,0 +1,10 @@
+{
+ "text": "deliver my final farewell address to the nation to the",
+ "args": ["--seed", "4", "--granularity", "0.8"],
+ "words": [
+  {"token": "deliver", "fragments": [["word", 8]]},
+  {"token": "my", "fragments": [["word", 9]]},
+  {"token": "final farewell address to the nation", "fragments": [["phrase", 10], ["phrase", 11], ["phrase", 12], ["phrase", 13], ["phrase", 14], ["phrase", 15]]},
+  {"token": "to the", "fragments": [["phrase", 13], ["phrase", 14]]}
+ ]
+}

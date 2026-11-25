@@ -1,0 +1,12 @@
+{
+ "text": "to the nation to the tradition",
+ "args": ["--seed", "2", "--nth", "to:3", "--nth", "the:2"],
+ "words": [
+  {"token": "to", "fragments": [["word", 13]]},
+  {"token": "the", "fragments": [["word", 14]]},
+  {"token": "nation", "fragments": [["word", 15]]},
+  {"token": "to", "fragments": [["word", 13]]},
+  {"token": "the", "fragments": [["word", 14]]},
+  {"token": "tradition", "fragments": [["word", 19]]}
+ ]
+}
