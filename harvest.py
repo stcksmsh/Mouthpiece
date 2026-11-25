@@ -9,13 +9,16 @@ add an adapter, get corpus files, no core changes.
 
 Two adapter styles are provided:
   - GovArchiveAdapter: scrape a frozen .gov index for a media-URL pattern
-                       (Obama / Trump White House archives). PD, direct files.
+                       (Obama White House archive). Direct files.
   - IAAdapter:         enumerate archive.org items via the internetarchive
                        API by collection/query, pull the audio derivative
                        (Free Law Project oral arguments, NASA/agency audio).
 
-Only .gov-frozen and IA-community/FedFlix/FreeLaw items are used — NOT the
-TV News Archive (C-SPAN) captures, which are access-restricted (403).
+Every adapter declares its own licence text, the URL of the evidence for
+that licence, and a tier: "clean" (the cited URL states the licence),
+"restricted" (known copyright or access restriction) or "unverified". An
+adapter that declares nothing yields licence "" and tier "unverified". The
+harvester records the tier; it does not refuse restricted sources.
 
 Requires: python3, ffmpeg on PATH, `pip install requests internetarchive`
 Usage:
@@ -24,6 +27,9 @@ Usage:
   ./harvest.py --source scotus        --max 5
   ./harvest.py --source nasa          --max 5
   ./harvest.py --source all           --max 20
+
+The manifest gained tier, licence_url, author and source_label columns. An
+existing batch file with the old header is refused: start a new batch file.
 """
 
 import argparse, csv, hashlib, os, re, subprocess, sys, tempfile
@@ -33,8 +39,10 @@ from typing import Iterator, Optional
 import requests
 
 OUT = "corpus"
-MANIFEST = "corpus/batch.csv"          # ingest manifest: file,speaker,date,event,source_url,license
-FIELDS = ["file", "speaker", "date", "event", "source_url", "license"]
+MANIFEST = "corpus/batch.csv"          # ingest manifest, columns below
+FIELDS = ["file", "speaker", "date", "event", "source_url", "license",
+          "tier", "licence_url", "author", "source_label"]
+TIERS = ("clean", "restricted", "unverified")
 UA = {"User-Agent": "Mozilla/5.0 (mouthpiece-harvest; research)"}
 os.makedirs(OUT, exist_ok=True)
 
@@ -46,8 +54,20 @@ class Item:
     date: str            # ISO YYYY-MM-DD or "" if unknown
     event: str
     source_url: str
-    license: str = "public domain"
+    license: str         # no default: an undeclared licence must stay visible
+    licence_url: str     # evidence URL for the licence claim, or ""
+    tier: str            # one of TIERS
+    author: str = ""
+    source_label: str = ""
     stem: str = ""       # output filename stem; auto-derived if empty
+
+
+def _licence(license="", licence_url="", tier="unverified") -> dict:
+    """An adapter's licence declaration. Undeclared means no licence text and
+    tier "unverified"; never assume public domain."""
+    if tier not in TIERS:
+        raise ValueError(f"tier must be one of {TIERS}, got {tier!r}")
+    return {"license": license, "licence_url": licence_url, "tier": tier}
 
 
 # ------------- manifest (append-only, dedup by file path) -------------
@@ -56,13 +76,21 @@ def _load_manifest_paths() -> set:
     if not os.path.exists(MANIFEST):
         return set()
     with open(MANIFEST, newline="") as f:
-        return {row["file"] for row in csv.DictReader(f)}
+        reader = csv.DictReader(f)
+        if reader.fieldnames is not None and reader.fieldnames != FIELDS:
+            print(f"! {MANIFEST} has an old header ({','.join(reader.fieldnames)}).")
+            print(f"  Start a new batch file: move it aside and rerun.")
+            sys.exit(1)
+        return {row["file"] for row in reader}
 
 def _append_manifest(row: dict):
-    exists = os.path.exists(MANIFEST)
+    new = not os.path.exists(MANIFEST) or os.path.getsize(MANIFEST) == 0
+    # Uploader emails have leaked into speaker fields before; drop any
+    # email-like value rather than write it anywhere.
+    row = {k: ("" if "@" in (v or "") else v) for k, v in row.items()}
     with open(MANIFEST, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
-        if not exists:
+        if new:
             w.writeheader()
         w.writerow(row)
 
@@ -77,47 +105,29 @@ def normalize_and_write(item: Item, done_paths: set) -> bool:
         done_paths.add(wav)
         return True
 
-    is_youtube = "youtube.com/watch" in item.media_url or "youtu.be/" in item.media_url
-
-    if is_youtube:
-        # yt-dlp extracts + transcodes to wav directly; skip requests/ffmpeg branch.
-        try:
-            subprocess.run(
-                ["yt-dlp", "-x", "--audio-format", "wav",
-                 "--postprocessor-args", "ffmpeg:-ac 1 -ar 16000",
-                 "-o", os.path.join(OUT, f"{stem}.%(ext)s"),
-                 item.media_url],
-                check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            print(f"  ! yt-dlp download failed: {e.stderr[:200] if e.stderr else e}")
-            return False
-        if not os.path.exists(wav):
-            print(f"  ! yt-dlp produced no {wav}")
-            return False
-    else:
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=_ext(item.media_url)) as tmp:
-                raw = tmp.name
-            with requests.get(item.media_url, headers=UA, stream=True, timeout=60) as r:
-                r.raise_for_status()
-                with open(raw, "wb") as f:
-                    for chunk in r.iter_content(1 << 16):
-                        f.write(chunk)
-        except Exception as e:
-            print(f"  ! download failed: {e}")
-            return False
-        try:
-            subprocess.run(
-                ["ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-                 "-i", raw, "-ac", "1", "-ar", "16000", wav],
-                check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"  ! ffmpeg failed: {e}")
-            return False
-        finally:
-            try: os.remove(raw)
-            except OSError: pass
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=_ext(item.media_url)) as tmp:
+            raw = tmp.name
+        with requests.get(item.media_url, headers=UA, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(raw, "wb") as f:
+                for chunk in r.iter_content(1 << 16):
+                    f.write(chunk)
+    except Exception as e:
+        print(f"  ! download failed: {e}")
+        return False
+    try:
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+             "-i", raw, "-ac", "1", "-ar", "16000", wav],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"  ! ffmpeg failed: {e}")
+        return False
+    finally:
+        try: os.remove(raw)
+        except OSError: pass
     # append a manifest row in the mouthpiece batch schema
     _append_manifest({
         "file": wav,
@@ -126,6 +136,10 @@ def normalize_and_write(item: Item, done_paths: set) -> bool:
         "event": item.event,
         "source_url": item.source_url,
         "license": item.license,
+        "tier": item.tier,
+        "licence_url": item.licence_url,
+        "author": item.author,
+        "source_label": item.source_label,
     })
     done_paths.add(wav)
     print(f"  + {stem}")
@@ -178,7 +192,9 @@ class GovArchiveAdapter:
     pages, and the .mp3 only appears on the article page itself.
     """
     def __init__(self, base, index_urls, media_re, speaker, event,
-                 article_re=None, date_from_url=None, date_from_name=None):
+                 article_re=None, date_from_url=None, date_from_name=None,
+                 **licence):
+        self.licence = _licence(**licence)
         self.base = base
         self.index_urls = index_urls
         self.media_re = re.compile(media_re)
@@ -203,7 +219,8 @@ class GovArchiveAdapter:
         if not date and self.date_from_name:
             date = self.date_from_name(os.path.basename(url)) or ""
         return Item(media_url=url, speaker=self.speaker, date=date,
-                    event=self.event, source_url=article_url or url)
+                    event=self.event, source_url=article_url or url,
+                    **self.licence)
 
     def __iter__(self) -> Iterator[Item]:
         seen_media = set()
@@ -265,7 +282,8 @@ class IAItemFilesAdapter:
     metadata, so date is parsed from the filename if possible, else "".
     """
     def __init__(self, identifier, speaker, event, date_from_name=None,
-                 speaker_from_name=None):
+                 speaker_from_name=None, **licence):
+        self.licence = _licence(**licence)
         self.identifier = identifier
         self.speaker = speaker
         self.event = event
@@ -306,7 +324,7 @@ class IAItemFilesAdapter:
             yield Item(media_url=url, speaker=speaker, date=date,
                        event=self.event,
                        source_url=f"https://archive.org/details/{self.identifier}",
-                       stem=stem)
+                       stem=stem, **self.licence)
 
 
 class IACollectionAdapter:
@@ -315,13 +333,21 @@ class IACollectionAdapter:
 
     `query` is an IA search query, e.g. 'collection:<slug>'. Confirm the slug
     first:  ia search 'collection:<slug>' --itemlist | head
+
+    `speaker_field` / `author_field` name the IA metadata key to read, or None.
+    IA `creator` is often the uploader or a book's author, not the voice, so
+    nothing is read as speaker unless the adapter asks for it.
     """
-    def __init__(self, query, speaker_field="creator", event="",
-                 default_speaker="unknown"):
+    def __init__(self, query, speaker_field=None, event="",
+                 default_speaker="", author_field=None, source_label="",
+                 **licence):
+        self.licence = _licence(**licence)
         self.query = query
         self.speaker_field = speaker_field
+        self.author_field = author_field
         self.event = event
         self.default_speaker = default_speaker
+        self.source_label = source_label
 
     def __iter__(self) -> Iterator[Item]:
         try:
@@ -356,74 +382,32 @@ class IACollectionAdapter:
                 continue
             url = f"https://archive.org/download/{ident}/{pick}"
             date = (md.get("date") or "")[:10]
-            speaker = md.get(self.speaker_field) or self.default_speaker
-            if isinstance(speaker, list):
-                speaker = speaker[0] if speaker else self.default_speaker
-            yield Item(media_url=url, speaker=str(speaker), date=date,
+            speaker = _md_field(md, self.speaker_field) or self.default_speaker
+            yield Item(media_url=url, speaker=speaker, date=date,
                        event=self.event or md.get("title", ""),
                        source_url=f"https://archive.org/details/{ident}",
-                       stem=re.sub(r"[^a-z0-9]+", "_", ident.lower())[:40])
+                       author=_md_field(md, self.author_field),
+                       source_label=self.source_label,
+                       stem=re.sub(r"[^a-z0-9]+", "_", ident.lower())[:40],
+                       **self.licence)
+
+
+def _md_field(md, key) -> str:
+    """First value of an IA metadata field, or "" if absent or email-like
+    (an uploader's address is not a person's name)."""
+    if not key:
+        return ""
+    v = md.get(key) or ""
+    if isinstance(v, list):
+        v = v[0] if v else ""
+    v = str(v)
+    return "" if "@" in v else v
 
 
 def _scotus_date(name):
     # SCOTUS files are named by docket (e.g. "09-1159.mp3"); no reliable date
     # in the filename. Return None -> date left blank, which ingest tolerates.
     return None
-
-
-# ------------------------- yt-dlp adapter -------------------------
-
-class YtDlpAdapter:
-    """Enumerate a YouTube channel/playlist and yield each video as an Item
-    whose media_url is the YouTube watch URL. The core's downloader special-
-    cases these (see normalize_and_write): yt-dlp extracts audio directly.
-
-    Use for sources that only exist as video, e.g. the NARA-run archived
-    Trump White House channel (youtube.com/whitehouse45). Requires yt-dlp.
-
-    channel_url: a channel, /videos page, or playlist URL.
-    """
-    def __init__(self, channel_url, speaker, event, default_speaker=None):
-        self.channel_url = channel_url
-        self.speaker = speaker
-        self.event = event
-
-    def __iter__(self) -> Iterator[Item]:
-        import shutil, json as _json
-        if not shutil.which("yt-dlp"):
-            print("  ! yt-dlp not on PATH (pip install yt-dlp)"); return
-        # Flat playlist enumeration: one JSON line per video, no download.
-        try:
-            proc = subprocess.run(
-                ["yt-dlp", "--flat-playlist", "-J", self.channel_url],
-                capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"  ! yt-dlp enumerate failed: {e.stderr[:200]}"); return
-        try:
-            data = _json.loads(proc.stdout)
-        except Exception as e:
-            print(f"  ! yt-dlp JSON parse failed: {e}"); return
-        entries = data.get("entries", []) or []
-        if not entries:
-            print(f"  ! 0 videos from {self.channel_url}")
-            print(f"    Verify the URL resolves:")
-            print(f"    yt-dlp --flat-playlist -J '{self.channel_url}' | head")
-            print(f"    If it 404s, the channel handle is wrong — find the real")
-            print(f"    channel/playlist URL and pass it to trump() / --url.")
-            return
-        for entry in entries:
-            vid = entry.get("id")
-            if not vid:
-                continue
-            title = entry.get("title", vid)
-            # upload_date not always present in flat mode; leave blank if absent
-            up = entry.get("upload_date") or ""
-            date = f"{up[0:4]}-{up[4:6]}-{up[6:8]}" if len(up) == 8 else ""
-            yield Item(
-                media_url=f"https://www.youtube.com/watch?v={vid}",
-                speaker=self.speaker, date=date, event=self.event,
-                source_url=f"https://www.youtube.com/watch?v={vid}",
-                stem=re.sub(r"[^a-z0-9]+", "_", f"{self.speaker}_{vid}".lower())[:60])
 
 
 # ------------------------- source registry -------------------------
@@ -439,18 +423,25 @@ def obama():
         media_re=r"https://obamawhitehouse\.archives\.gov/videos/\d{4}/[A-Za-z]+/\d{8}_Weekly_Address\.mp3",
         article_re=r"https://obamawhitehouse\.archives\.gov/the-press-office/\d{4}/\d{2}/\d{2}/weekly-address[^\"'\s)]*",
         speaker="Barack Obama", event="Weekly Address",
-        date_from_url=_date_from_press_url)
+        date_from_url=_date_from_press_url,
+        # Evidence: the archive's copyright page states "government-produced
+        # materials appearing on this site are not copyright protected."
+        license="US federal government work",
+        licence_url="https://obamawhitehouse.archives.gov/copyright",
+        tier="clean")
 
 def trump():
     # The NARA archived YouTube channel handle does not resolve. Reliable source:
     # C-SPAN captures of Trump remarks on archive.org — individual items, each a
-    # downloadable file, via the SAME ia mechanism as scotus/nasa (no yt-dlp).
+    # downloadable file, via the SAME ia mechanism as scotus/nasa.
     # Combative/improvisational register (the "rage" end of the corpus).
-    # CAVEAT: C-SPAN items carry a Title-17 copyright notice, unlike the pure-PD
-    # Obama/SCOTUS material — fine for private use, not a clean-PD story.
+    # C-SPAN items carry a Title-17 copyright notice: restricted.
     return IACollectionAdapter(
         query='collection:TV-CSPAN AND title:(Trump AND Remarks)',
-        event="Trump Remarks (C-SPAN)", default_speaker="Donald Trump")
+        speaker_field="creator",
+        event="Trump Remarks (C-SPAN)", default_speaker="Donald Trump",
+        license="C-SPAN capture, Title-17 copyright notice",
+        tier="restricted")
 
 def scotus():
     # Free Law Project SCOTUS oral arguments live as FILES inside ONE IA item.
@@ -459,34 +450,52 @@ def scotus():
     return IAItemFilesAdapter(identifier="SCOTUSOralArugments",
                               speaker="SCOTUS oral argument",
                               event="Supreme Court Oral Argument",
-                              date_from_name=_scotus_date)
+                              date_from_name=_scotus_date,
+                              # No licence statement found for this IA item.
+                              tier="unverified")
 
 def nasa():
     # NASA audio as a true collection (separate items). CONFIRM the slug first:
     #   ia search 'collection:nasaaudiocollection' --itemlist | head
     # Control-room / procedural / institutional texture.
+    # IA `creator` here is the uploader (sometimes a personal email), so it is
+    # not read. Items are uploaded by individuals, so NASA authorship of each
+    # item is not established: unverified despite NASA's media policy.
     return IACollectionAdapter(query='collection:nasaaudiocollection',
-                               event="NASA Audio", default_speaker="NASA")
+                               event="NASA Audio", source_label="NASA Audio",
+                               tier="unverified")
+
+NASA_MEDIA_URL = "https://www.nasa.gov/nasa-brand-center/images-and-media/"
 
 def nasa_reels():
-    # Single item bundling many NASA highlight/soundbite mp3s — clean PD.
+    # Single item bundling many NASA highlight/soundbite mp3s.
+    # Evidence: NASA's media guidelines state NASA audio "generally [is] not
+    # subject to copyright in the United States."
     return IAItemFilesAdapter(identifier="NasaAudioHighlightReels",
-                              speaker="NASA", event="NASA Audio Highlight")
+                              speaker="NASA", event="NASA Audio Highlight",
+                              license="US federal government work (NASA)",
+                              licence_url=NASA_MEDIA_URL, tier="clean")
 
 def apollo11():
-    # Apollo 11 mission audio (air-to-ground). Single item, many files. PD.
+    # Apollo 11 mission audio (air-to-ground). Single item, many files.
+    # Evidence: NASA media guidelines, as for nasa_reels.
     return IAItemFilesAdapter(identifier="Apollo11Audio",
-                              speaker="Apollo 11", event="Apollo 11 Mission Audio")
+                              speaker="Apollo 11", event="Apollo 11 Mission Audio",
+                              license="US federal government work (NASA)",
+                              licence_url=NASA_MEDIA_URL, tier="clean")
 
 def librivox():
-    # LibriVox: public-domain audiobook readings. Thousands of items, huge
-    # vocabulary, explicitly PD/CC0. This is the big word-count multiplier.
+    # LibriVox: audiobook readings. Thousands of items, huge vocabulary.
+    # This is the big word-count multiplier.
     # Each item is a separate audiobook; grab one audio file per item.
     # Narrated-prose register (calm to dramatic), many different readers.
+    # IA `creator` is the book's author; the reader is unknown at harvest time.
+    # LibriVox's public-domain statement (librivox.org/pages/public-domain/)
+    # could not be loaded to confirm it, so: unverified.
     return IACollectionAdapter(query='collection:librivoxaudio',
-                               speaker_field="creator",
+                               author_field="creator",
                                event="LibriVox reading",
-                               default_speaker="LibriVox reader")
+                               tier="unverified")
 
 def _speech_speaker_from_name(name):
     # "Inaugural Address - Franklin D. Roosevelt (1933).ogg" -> "Franklin D. Roosevelt"
@@ -501,20 +510,26 @@ def _speech_date_from_name(name):
 
 def speeches():
     # "Greatest Speeches of the 20th Century" — single item, many mp3s,
-    # labeled Public Domain. FDR, Churchill, etc. Dense in war/political/
+    # labeled Public Domain by its community uploader, which is not evidence.
+    # FDR, Churchill, etc. Dense in war/political/
     # institutional-gravitas vocabulary. Speaker+year parsed from filename.
     return IAItemFilesAdapter(identifier="Greatest_Speeches_of_the_20th_Century",
                               speaker="20th-century orator",
                               event="Greatest Speeches of the 20th Century",
                               speaker_from_name=_speech_speaker_from_name,
-                              date_from_name=_speech_date_from_name)
+                              date_from_name=_speech_date_from_name,
+                              tier="unverified")
 
 def churchill():
-    # Winston Churchill speeches/broadcasts — single item, 105 mp3s, PD.
+    # Winston Churchill speeches/broadcasts — single item, 105 mp3s.
     # Wartime register; the densest single source for the word "war".
+    # BBC/CBC broadcasts; the IA Public Domain label is the uploader's and
+    # the rights are unproven: restricted until there is evidence.
     return IAItemFilesAdapter(identifier="Winston_Churchill",
                               speaker="Winston Churchill",
-                              event="Churchill Speech/Broadcast")
+                              event="Churchill Speech/Broadcast",
+                              license="rights unproven (BBC/CBC broadcasts)",
+                              tier="restricted")
 
 SOURCES = {"obama": obama, "trump": trump, "scotus": scotus,
            "nasa": nasa, "nasa_reels": nasa_reels, "apollo11": apollo11,
@@ -527,17 +542,12 @@ def main():
                     choices=list(SOURCES) + ["all"])
     ap.add_argument("--max", type=int, default=10,
                     help="max items per source")
-    ap.add_argument("--url", default=None,
-                    help="override channel/playlist URL for yt-dlp sources "
-                         "(e.g. --source trump --url 'https://youtube.com/...')")
     args = ap.parse_args()
     done_paths = _load_manifest_paths()
     targets = list(SOURCES) if args.source == "all" else [args.source]
     for name in targets:
         print(f"\n=== {name} ===")
         adapter = SOURCES[name]()
-        if args.url and isinstance(adapter, YtDlpAdapter):
-            adapter.channel_url = args.url
         run(adapter, args.max, done_paths)
     print(f"\nManifest: {MANIFEST}  ->  mouthpiece ingest --batch {MANIFEST}")
 
