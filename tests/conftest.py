@@ -1,7 +1,8 @@
 """Shared fixture: a tiny real corpus (8 s of a public-domain address) indexed without WhisperX.
 
 The fixture JSON holds word timestamps exported from a real WhisperX ingest of the same
-audio, so tests exercise the real index and assembly code with no model download.
+audio, so tests exercise the real index and assembly code with no model download. Its
+acoustic features come from mouthpiece.features run on the fixture WAV.
 """
 
 import json

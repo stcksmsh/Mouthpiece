@@ -234,6 +234,15 @@ def insert_word_instances(conn: sqlite3.Connection, source_id: int, words: list[
     conn.commit()
 
 
+def update_word_features(conn: sqlite3.Connection, rows: list[tuple[int, dict]]) -> None:
+    """Store acoustic features (see features.py) for (word_instance_id, features) pairs."""
+    conn.executemany(
+        "UPDATE word_instances SET f0_mean=?, f0_var=?, rms=?, spectral_tilt=? WHERE id=?",
+        [(f["f0_mean"], f["f0_var"], f["rms"], f["spectral_tilt"], wid) for wid, f in rows],
+    )
+    conn.commit()
+
+
 def word_count(conn: sqlite3.Connection, source_id: int) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM word_instances WHERE source_id=?", (source_id,)

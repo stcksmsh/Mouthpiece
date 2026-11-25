@@ -8,6 +8,7 @@
     mouthpiece coverage "some text"
     mouthpiece sources
     mouthpiece resyllabify
+    mouthpiece features [--source ID] [--force]
 """
 
 import argparse
@@ -19,7 +20,7 @@ from pathlib import Path
 
 _SUBCOMMANDS = {
     "ingest", "batch-ingest", "render", "replay", "coverage", "sources", "remove", "wipe",
-    "candidates", "serve", "resyllabify",
+    "candidates", "serve", "resyllabify", "features",
 }
 
 
@@ -439,6 +440,22 @@ def cmd_resyllabify(args: argparse.Namespace) -> None:
           f"{n_oov} not in CMUdict.")
 
 
+def cmd_features(args: argparse.Namespace) -> None:
+    from . import features, index
+
+    p = _paths()
+    conn = index.get_connection(p["db"])
+    total = 0
+    for r in features.backfill(conn, p["corpus"], source_id=args.source, force=args.force):
+        if r["missing"]:
+            print(f"  Warning: [{r['id']}] {r['filename']}: audio not found in {p['corpus']}, skipped")
+        else:
+            total += r["updated"]
+            print(f"  [{r['id']}] {r['filename']}: {r['updated']} words updated in {r['seconds']:.1f}s")
+    conn.close()
+    print(f"Done. {total} word instance(s) updated.")
+
+
 def cmd_sources(args: argparse.Namespace) -> None:
     from . import index
 
@@ -581,6 +598,13 @@ def main() -> None:
         help="Recompute syllables for all words, not just ones missing them",
     )
 
+    # --- features ---
+    p_feat = sub.add_parser(
+        "features", help="Compute pitch, loudness and spectral tilt for words that lack them",
+    )
+    p_feat.add_argument("--source", type=int, help="Only this source id")
+    p_feat.add_argument("--force", action="store_true", help="Recompute words that already have features")
+
     args = parser.parse_args()
 
     if args.command == "serve":
@@ -600,4 +624,5 @@ def main() -> None:
         "wipe":          cmd_wipe,
         "sources":       cmd_sources,
         "resyllabify":   cmd_resyllabify,
+        "features":      cmd_features,
     }[args.command](args)
