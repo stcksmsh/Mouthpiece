@@ -1,5 +1,6 @@
 """Word matching: tokenize input text, find best clip candidates per token."""
 
+import functools
 import math
 import re
 
@@ -112,15 +113,23 @@ def _pick(
     return pool[idx]
 
 
+@functools.cache
+def _word_phone_count(word: str) -> int:
+    """CMUdict phone count of `word`, or its letter count when not in CMUdict."""
+    from . import phonemes
+    entries = phonemes._cmu_entries(word) if word else None
+    return len(entries[0]) if entries else sum(c.isalpha() for c in word)
+
+
 def _clip_rate(row: dict) -> float | None:
-    """Phonemes (or letters when phonemes are unknown) per second of the clip."""
+    """Phones per second of the clip, the same unit for whole words (CMUdict)
+    and sub-word fragments (their phone_key), so joins into a stitched word
+    compare like with like."""
     dur = row["end_s"] - row["start_s"]
-    if row.get("phonemes"):
-        n = len(row["phonemes"].split())
-    elif row.get("phone_key"):
+    if row.get("phone_key"):
         n = len(row["phone_key"].split("-"))
     else:
-        n = sum(c.isalpha() for c in row.get("word") or "")
+        n = _word_phone_count(row.get("word") or "")
     return n / dur if n and dur > 0 else None
 
 
@@ -189,7 +198,8 @@ def _select_viterbi(
     """Replace each deferred candidate pool (a tuple) in `results` with the row
     on the cheapest whole-sentence path. Unit cost = -log(normalised
     pool_weights) - TEMPERATURE * Gumbel noise, so at smooth 0 every position
-    samples the greedy distribution (Gumbel-max). RNG: exactly one
+    samples p^(1/TEMPERATURE), normalised (Gumbel-max): the greedy
+    distribution at TEMPERATURE 1, sharper below it. RNG: exactly one
     rng.gumbel(size=total pool size) call, pools in sentence order; none
     when TEMPERATURE is 0 or rng is None."""
     pools = [clip for _, clip in results if isinstance(clip, tuple)]

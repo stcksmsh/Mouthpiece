@@ -3,6 +3,7 @@
 import importlib.util
 import itertools
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -100,6 +101,16 @@ def test_tempo_null_when_duration_or_length_unknown():
     assert match.transition_cost(a, b) > 0
     assert match.transition_cost(a, {**b, "word": ""}) == 0.0
     assert match.transition_cost(a, {**b, "end_s": 0.0}) == 0.0
+
+
+def test_tempo_compares_words_and_subword_fragments_in_one_unit():
+    # "the" is DH AH: 2 phones in 0.1 s, like the 2-phone fragment that ends a stitched word.
+    word = _row(word="the", start=0.0, end=0.1)
+    fragment = {**_row(word=None, start=5.0, end=5.1), "phone_key": "DH-AH"}
+    assert match.transition_cost(fragment, word) == pytest.approx(0.0)
+    assert match.transition_cost(word, fragment) == pytest.approx(0.0)
+    slower = {**fragment, "end_s": 5.2}
+    assert match.transition_cost(word, slower) == pytest.approx(match.W_TEMPO * math.log(2))
 
 
 def test_source_change_alone_costs_nothing():
