@@ -199,7 +199,7 @@ def test_same_seed_same_manifest(run_cli, tmp_path):
                                "--selector", "viterbi", "--continuity", "1")
         assert code == 0, stdout
         m = json.loads(out.with_name(f"{name}.manifest.json").read_text())
-        assert m["controls"] == {"granularity": 0.0, "diction": 0.0, "emotion": 0.0, "nth": {},
+        assert m["controls"] == {"granularity": 0.0, "diction": 0.0, "intensity": 0.0, "pitch": 0.0, "tempo": 0.0, "nth": {},
                                  "selector": "viterbi", "smooth": 1.0, "continuity": 1.0,
                                  "sources": {"tiers": ["clean", "unverified"], "only": [], "exclude": [], "langs": ["en"]}}
         words.append([w["fragments"] for w in m["words"]])

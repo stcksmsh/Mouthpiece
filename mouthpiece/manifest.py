@@ -10,7 +10,9 @@ Top-level fields:
   rendered_at     UTC ISO-8601 time the manifest was written.
   seed            RNG seed the render was selected with.
   text            Input text.
-  controls        Render controls: granularity, diction, emotion, nth ({word: rank} overrides).
+  controls        Render controls: granularity, the search biases diction, intensity, pitch
+                  and tempo, nth ({word: rank} overrides). Manifests written before intensity
+                  replaced it record `emotion` instead, and no pitch or tempo.
   output_wav      Path of the WAV this manifest describes.
   words           One entry per assembled unit (a word, a gap, or a multi-word phrase).
 

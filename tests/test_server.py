@@ -133,7 +133,7 @@ def test_manifest_tracks_swap_reroll_and_lock_and_replays(run_cli, tmp_path):
 
     m = server.api_manifest(r["id"])
     assert m["schema_version"] == 2
-    assert m["controls"] == {"granularity": 0.0, "diction": 0.0, "emotion": 0.0, "nth": {},
+    assert m["controls"] == {"granularity": 0.0, "diction": 0.0, "intensity": 0.0, "pitch": 0.0, "tempo": 0.0, "nth": {},
                              "sources": {"tiers": ["clean", "unverified"], "only": [], "exclude": [], "langs": ["en"]}}
     w0, w1, w2 = m["words"]
     assert w0["fragments"] == [{"tier": "word", "instance_id": other}]
@@ -214,3 +214,33 @@ def test_swap_then_reroll_same_phrase_word():
     r = server.api_reroll(r["id"], 1)
     assert r["words"][1]["word_instance_id"] is not None
     assert [f["tier"] for f in _frags(server.api_manifest(r["id"]))] == ["word"] * 3
+
+
+@pytest.mark.usefixtures("env")
+def test_render_request_takes_bias_controls_and_emotion_alias():
+    r = server.api_render(server.RenderRequest(text=TEXT, seed=5, emotion=0.5, pitch=-2.0, tempo=0.25))
+    biases = {"granularity": 0.0, "diction": 0.0, "intensity": 0.5, "pitch": -1.0, "tempo": 0.25}
+    assert r["criteria"] == {**biases, "emotion": 0.5}
+    controls = server.api_manifest(r["id"])["controls"]
+    assert {k: v for k, v in controls.items() if k not in ("nth", "sources")} == biases
+    r = server.api_render(server.RenderRequest(text=TEXT, seed=5, intensity=-0.5))
+    assert r["criteria"]["intensity"] == -0.5
+
+
+@pytest.mark.parametrize("pitch", [1.0, -1.0])
+@pytest.mark.usefixtures("env")
+def test_reroll_follows_pitch_bias(pitch):
+    from mouthpiece import index
+
+    conn = index.get_connection(server._paths()["db"])
+    rows = index.search_word(conn, "to")
+    conn.close()
+    voiced = sorted((r for r in rows if r["f0_mean"]), key=lambda r: r["f0_mean"])
+    unvoiced = next(r["id"] for r in rows if not r["f0_mean"])
+    low, high = voiced[0]["id"], voiced[-1]["id"]
+
+    r = server.api_render(server.RenderRequest(text="to", seed=5, pitch=pitch))
+    for _ in range(5):
+        # From the unvoiced clip, a reroll chooses between the low and the high one.
+        server.api_swap(r["id"], 0, server.SwapRequest(word_instance_id=unvoiced))
+        assert _ids(server.api_reroll(r["id"], 0)) == [high if pitch > 0 else low]
