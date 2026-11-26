@@ -80,6 +80,11 @@ def _add_source_args(parser: argparse.ArgumentParser) -> None:
              "restricted, or 'all' (default: clean,unverified; a source with no tier is unverified)",
     )
     parser.add_argument(
+        "--lang", default="en",
+        help="source languages clips may come from: a comma list such as en,fr, or 'all' "
+             "(default: en; a source with no language is en)",
+    )
+    parser.add_argument(
         "--only", action="append", metavar="NAME",
         help="use only sources whose speaker label or filename contains NAME "
              "(case-insensitive; repeatable, any one may match)",
@@ -96,8 +101,9 @@ def _source_filter(args: argparse.Namespace):
     from . import index
 
     tiers = index.TIERS if args.tier == "all" else tuple(t.strip() for t in args.tier.split(","))
+    langs = None if args.lang == "all" else tuple(l.strip() for l in args.lang.split(","))
     try:
-        return index.SourceFilter(tiers=tiers, only=tuple(args.only or ()),
+        return index.SourceFilter(tiers=tiers, langs=langs, only=tuple(args.only or ()),
                                   exclude=tuple(args.exclude or ()))
     except ValueError as exc:
         sys.exit(f"Error: {exc}")

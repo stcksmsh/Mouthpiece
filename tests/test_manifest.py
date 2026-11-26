@@ -56,7 +56,7 @@ def test_cli_manifest_has_every_v2_field(run_cli, tmp_path, text, extra):
         "diction":     _option(extra, "--diction", 0.0),
         "emotion":     _option(extra, "--emotion", 0.0),
         "nth":         nth,
-        "sources":     {"tiers": ["clean", "unverified"], "only": [], "exclude": []},
+        "sources":     {"tiers": ["clean", "unverified"], "only": [], "exclude": [], "langs": ["en"]},
     }
 
     if nth:

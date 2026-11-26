@@ -127,14 +127,18 @@ class SourceFilter:
 
     A source passes when its tier (NULL counts as unverified) is in `tiers`, it
     matches at least one `only` needle (when any are given), and it matches no
-    `exclude` needle. A needle matches when it is a case-insensitive substring of
+    `exclude` needle, and its lang (NULL counts as en) is in `langs` (None: any language).
+    A needle matches when it is a case-insensitive substring of
     the source's speaker_label() or its filename.
     """
     tiers: tuple[str, ...] = ("clean", "unverified")
     only: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
+    langs: tuple[str, ...] | None = ("en",)
 
     def __post_init__(self):
+        if self.langs is not None and (not self.langs or not all(l.strip() for l in self.langs)):
+            raise ValueError("--lang needs at least one non-empty language, or 'all'")
         if not self.tiers:
             raise ValueError("at least one tier is needed")
         for t in self.tiers:
@@ -146,6 +150,9 @@ class SourceFilter:
         """A WHERE condition on the sources table aliased `s`, and its parameters."""
         conds = [f"COALESCE(s.tier, 'unverified') IN ({', '.join('?' * len(self.tiers))})"]
         params = list(self.tiers)
+        if self.langs is not None:
+            conds.append(f"COALESCE(s.lang, 'en') IN ({', '.join('?' * len(self.langs))})")
+            params += self.langs
         hit = "instr(mp_source_text(s.speaker, s.source_label, s.date, s.filename), ?) > 0"
         if self.only:
             conds.append("(" + " OR ".join([hit] * len(self.only)) + ")")
@@ -157,7 +164,8 @@ class SourceFilter:
 
     def controls(self) -> dict:
         """The filter as recorded in a render manifest."""
-        return {"tiers": list(self.tiers), "only": list(self.only), "exclude": list(self.exclude)}
+        return {"tiers": list(self.tiers), "only": list(self.only), "exclude": list(self.exclude),
+                "langs": None if self.langs is None else list(self.langs)}
 
 
 DEFAULT_FILTER = SourceFilter()
