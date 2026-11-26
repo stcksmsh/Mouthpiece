@@ -1,6 +1,6 @@
 # MOUTHPIECE state
 
-Updated 2026-11-25 (evening). Plan: `docs/PLAN.md`. Coordinator keeps this file current; run `nonslop status` first.
+Updated 2026-11-26. Plan: `docs/PLAN.md`. Coordinator keeps this file current; run `nonslop status` first.
 
 ## Goal
 Album instrument: speech collage with the patchwork feel (frequent source changes) but legible. Today's output is "meh"; only `--diction 1` was somewhat legible.
@@ -11,20 +11,21 @@ Album instrument: speech collage with the patchwork feel (frequent source change
 - S1.2 pure cost fns (#15). Phrase-swap fix (#16). S1.2b acoustic features + `mouthpiece features` (#17).
 - S1.3 Viterbi `--selector viterbi --smooth --continuity` (#18, 05f7288); greedy still default.
 - S3.5a LibriVox `clean`, new `voa` adapter, RSS size/entity guard (#19, 97af8c3).
+- S1.6a tier + source filter `--only/--exclude/--tier` (#20). State handover (#21).
+- Obama harvester: relative links via urljoin, pagination `index__q_page=N.html`, 44 index pages (#22, f6a0177). Not yet run.
 
 ## In flight
-- S1.6a tier + source filter: PR #20, `claude/s1.6a-source-filter` @7d38587. Verify ok, review clean. **Waiting for owner "merge 20".**
+- none
 
 ## Next, in order (each heavy step needs owner go)
-1. After #20 merges: apply tiers to real DB: `tools/backfill_attribution.py --db db/mouthpiece.db --csv corpus/attribution.csv --dry-run`, show owner, then without `--dry-run`. Light, but writes the DB: ask.
-2. Obama harvester fix (`harvest.py`): archive links are relative (`/videos/YYYY/Month/…mp3`), pagination is `index__q_page=N.html`; adapter regex wants absolute URLs and `?page=N` → finds 0 items. Code-only builder slice.
-3. Resume feature backfill (`.venv/bin/python -u -m mouthpiece features`, resumable): paused at 61,132/165,425 words, ~1 h CPU, ~2.4 GB RAM peak. **Owner go only.**
-4. Listening comparison (after backfill): bench greedy / greedy `--diction 1` / viterbi / viterbi `--diction 1`, labels via `--label`; send 3–4 clips each + index.txt. Owner picks; default flips to viterbi only if he prefers it.
-5. Then S1.4 edge context, S1.5 voice modes, S1.6b picker UI, S2.1 render persistence, S0.11 README.
-6. Corpus growth: batch A agreed in size (≈20 Obama + 30 LibriVox + 20 VOA, "A or more") but **no harvest/ingest until owner says go**: disk `/secondary` 99% full (8.6 GB free), RAM/CPU tight.
+1. Apply tiers to real DB: `tools/backfill_attribution.py --db db/mouthpiece.db --csv corpus/attribution.csv --dry-run`, show owner, then without `--dry-run`. Light, but writes the DB: ask.
+2. Resume feature backfill (`.venv/bin/python -u -m mouthpiece features`, resumable): paused at 61,132/165,425 words, ~1 h CPU, ~2.4 GB RAM peak. **Owner go only.**
+3. Listening comparison (after backfill): bench greedy / greedy `--diction 1` / viterbi / viterbi `--diction 1`, labels via `--label`; send 3–4 clips each + index.txt. Owner picks; default flips to viterbi only if he prefers it.
+4. Then S1.4 edge context, S1.5 voice modes, S1.6b picker UI, S2.1 render persistence, S0.11 README.
+5. Corpus growth: batch A agreed in size (≈20 Obama + 30 LibriVox + 20 VOA, "A or more") but **no harvest/ingest until owner says go**: disk `/secondary` 99% full (8.6 GB free), RAM/CPU tight.
 
 ## Waiting on owner
-- merge #20; OK to apply tiers to real DB; go for backfill / listening / harvest when resources allow.
+- OK to apply tiers to real DB; go for backfill / listening / harvest when resources allow.
 - Churchill licence evidence (stays `restricted` until then).
 
 ## Decisions
