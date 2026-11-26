@@ -231,3 +231,51 @@ def test_old_header_batch_file_is_refused_untouched(tmp_path, monkeypatch, capsy
     assert exc.value.code not in (0, None)
     assert batch.read_text() == old
     assert "new batch file" in capsys.readouterr().out
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "obama"
+OBAMA = "https://obamawhitehouse.archives.gov"
+
+
+def _serve(monkeypatch, pages):
+    """Serve `pages` {url: html} through the adapter's fetch; unknown URLs 404 (empty body)."""
+    monkeypatch.setattr(
+        harvest.GovArchiveAdapter, "_get", lambda _self, url: pages.get(url, ""))
+
+
+def test_obama_index_urls_use_the_archive_pagination():
+    idx = harvest.obama().index_urls
+    assert idx[:2] == [
+        f"{OBAMA}/briefing-room/weekly-address",
+        f"{OBAMA}/briefing-room/weekly-address/index__q_page=1.html",
+    ]
+    assert len(idx) == 44
+
+
+def test_obama_finds_mp3_items_from_relative_links(monkeypatch):
+    adapter = harvest.obama()
+    article = f"{OBAMA}/the-press-office/2016/12/31/weekly-address-working-together-keep-america-moving-forward"
+    _serve(monkeypatch, {
+        adapter.index_urls[0]: (FIXTURES / "index_page1.html").read_text(),
+        article: (FIXTURES / "article_20161231.html").read_text(),
+    })
+    items = list(adapter)
+    assert [(i.media_url, i.date, i.source_url) for i in items] == [
+        (f"{OBAMA}/videos/2016/December/20161231_Weekly_Address.mp3", "2016-12-31", article)]
+    assert items[0].speaker == "Barack Obama"
+    assert items[0].tier == "clean"
+
+
+def test_obama_relative_and_absolute_link_to_one_mp3_give_one_item(monkeypatch):
+    adapter = harvest.obama()
+    a1 = f"{OBAMA}/the-press-office/2016/12/31/weekly-address-a"
+    a2 = f"{OBAMA}/the-press-office/2016/12/31/weekly-address-b"
+    mp3 = "/videos/2016/December/20161231_Weekly_Address.mp3"
+    _serve(monkeypatch, {
+        adapter.index_urls[0]: (
+            '<a href="/the-press-office/2016/12/31/weekly-address-a">a</a>'
+            f'<a href="{a2}">b</a>'),
+        a1: f'<a href="{mp3}">MP3</a>',
+        a2: f'<a href="{OBAMA}{mp3}">MP3</a>',
+    })
+    assert [i.media_url for i in adapter] == [OBAMA + mp3]

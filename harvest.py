@@ -34,6 +34,7 @@ existing batch file with the old header is refused: start a new batch file.
 
 import argparse, csv, hashlib, os, re, subprocess, sys, tempfile
 import xml.etree.ElementTree as ET
+from urllib.parse import urljoin
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from typing import Iterator, Optional
@@ -244,8 +245,7 @@ class GovArchiveAdapter:
                 articles = []
                 seen_art = set()
                 for m in self.article_re.finditer(html):
-                    au = m.group(0)
-                    au = au if au.startswith("http") else self.base + au
+                    au = urljoin(idx, m.group(0))
                     if au not in seen_art:
                         seen_art.add(au)
                         articles.append(au)
@@ -256,7 +256,7 @@ class GovArchiveAdapter:
                     mm = self.media_re.search(ahtml)
                     if not mm:
                         continue
-                    mu = mm.group(0)
+                    mu = urljoin(au, mm.group(0))
                     if mu in seen_media:
                         continue
                     seen_media.add(mu)
@@ -463,15 +463,17 @@ def _scotus_date(name):
 # ------------------------- source registry -------------------------
 
 def obama():
-    # Two-level crawl: index pages (?page=N) list article pages; each article
-    # page carries the .mp3 link. Pagination confirmed as ?page=0..43.
+    # Two-level crawl: index pages list article pages; each article page
+    # carries the .mp3 link. The archive links with relative URLs. The site
+    # shows 44 index pages ("N of 44"): the bare index, then index__q_page=1..43.
     base = "https://obamawhitehouse.archives.gov"
     idx = [f"{base}/briefing-room/weekly-address"] + \
-          [f"{base}/briefing-room/weekly-address?page={n}" for n in range(1, 44)]
+          [f"{base}/briefing-room/weekly-address/index__q_page={n}.html" for n in range(1, 44)]
+    host = r"(?:https://obamawhitehouse\.archives\.gov)?"
     return GovArchiveAdapter(
         base, idx,
-        media_re=r"https://obamawhitehouse\.archives\.gov/videos/\d{4}/[A-Za-z]+/\d{8}_Weekly_Address\.mp3",
-        article_re=r"https://obamawhitehouse\.archives\.gov/the-press-office/\d{4}/\d{2}/\d{2}/weekly-address[^\"'\s)]*",
+        media_re=host + r"/videos/\d{4}/[A-Za-z]+/\d{8}_Weekly_Address\.mp3",
+        article_re=host + r"/the-press-office/\d{4}/\d{2}/\d{2}/weekly-address[^\"'\s)]*",
         speaker="Barack Obama", event="Weekly Address",
         date_from_url=_date_from_press_url,
         # Evidence: the archive's copyright page states "government-produced
