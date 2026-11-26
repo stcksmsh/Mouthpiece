@@ -76,6 +76,8 @@ def _ingest(
 ) -> int:
     from . import index, phonemes, transcribe
 
+    # Checked before any audio is written, so bad metadata leaves nothing behind.
+    index.check_tier(meta.get("tier"))
     corpus_dir.mkdir(parents=True, exist_ok=True)
     dest = corpus_dir / (audio_path.stem + ".wav")
 

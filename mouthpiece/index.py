@@ -2,6 +2,7 @@
 
 import re
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 SCHEMA = """
@@ -94,12 +95,13 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     _migrate_sources(conn)
+    conn.create_function("mp_source_text", 4, _source_text, deterministic=True)
     return conn
 
 
 # Attribution columns added after the first schema. They are added in place on
 # open so existing DBs keep their rows; old rows read NULL.
-_ADDED_SOURCE_COLS = ("author", "reader", "uploader", "source_label", "licence_url", "lang")
+_ADDED_SOURCE_COLS = ("author", "reader", "uploader", "source_label", "licence_url", "lang", "tier")
 
 # Source metadata keys accepted from ingest (JSON / CSV); other keys are ignored.
 SOURCE_FIELDS = ("speaker", "date", "event", "source_url", "license", *_ADDED_SOURCE_COLS)
@@ -108,6 +110,63 @@ SOURCE_FIELDS = ("speaker", "date", "event", "source_url", "license", *_ADDED_SO
 ATTRIBUTION_FIELDS = (
     "speaker", "author", "reader", "uploader", "source_label", "license", "licence_url", "lang",
 )
+
+
+# Licence tiers a source can carry; NULL is read as "unverified".
+TIERS = ("clean", "unverified", "restricted")
+
+
+def check_tier(tier: str | None) -> None:
+    if tier is not None and tier not in TIERS:
+        raise ValueError(f"tier must be one of {', '.join(TIERS)}, got {tier!r}")
+
+
+@dataclass(frozen=True)
+class SourceFilter:
+    """Which sources clips may come from.
+
+    A source passes when its tier (NULL counts as unverified) is in `tiers`, it
+    matches at least one `only` needle (when any are given), and it matches no
+    `exclude` needle. A needle matches when it is a case-insensitive substring of
+    the source's speaker_label() or its filename.
+    """
+    tiers: tuple[str, ...] = ("clean", "unverified")
+    only: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if not self.tiers:
+            raise ValueError("at least one tier is needed")
+        for t in self.tiers:
+            check_tier(t)
+        if not all(n.strip() for n in self.only + self.exclude):
+            raise ValueError("--only/--exclude need a non-empty name")
+
+    def sql(self) -> tuple[str, tuple]:
+        """A WHERE condition on the sources table aliased `s`, and its parameters."""
+        conds = [f"COALESCE(s.tier, 'unverified') IN ({', '.join('?' * len(self.tiers))})"]
+        params = list(self.tiers)
+        hit = "instr(mp_source_text(s.speaker, s.source_label, s.date, s.filename), ?) > 0"
+        if self.only:
+            conds.append("(" + " OR ".join([hit] * len(self.only)) + ")")
+            params += [n.casefold() for n in self.only]
+        for n in self.exclude:
+            conds.append(f"NOT {hit}")
+            params.append(n.casefold())
+        return " AND ".join(conds), tuple(params)
+
+    def controls(self) -> dict:
+        """The filter as recorded in a render manifest."""
+        return {"tiers": list(self.tiers), "only": list(self.only), "exclude": list(self.exclude)}
+
+
+DEFAULT_FILTER = SourceFilter()
+
+
+def _source_text(speaker, source_label, date, filename) -> str:
+    """What --only/--exclude needles are matched against (see SourceFilter)."""
+    label = speaker_label({"speaker": speaker, "source_label": source_label, "date": date})
+    return f"{label}\n{filename}".casefold()
 
 
 def _migrate_sources(conn: sqlite3.Connection) -> None:
@@ -167,13 +226,15 @@ def insert_source(
     source_label: str | None = None,
     licence_url: str | None = None,
     lang: str | None = None,
+    tier: str | None = None,
 ) -> int:
+    check_tier(tier)
     cur = conn.execute(
         "INSERT OR IGNORE INTO sources (filename, speaker, date, event, source_url, license,"
-        " author, reader, uploader, source_label, licence_url, lang)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        " author, reader, uploader, source_label, licence_url, lang, tier)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (filename, speaker, date, event, source_url, license,
-         author, reader, uploader, source_label, licence_url, lang),
+         author, reader, uploader, source_label, licence_url, lang, tier),
     )
     conn.commit()
     if cur.lastrowid:
@@ -249,7 +310,10 @@ def word_count(conn: sqlite3.Connection, source_id: int) -> int:
     ).fetchone()[0]
 
 
-def search_word(conn: sqlite3.Connection, word: str, limit: int = 20) -> list[dict]:
+def search_word(
+    conn: sqlite3.Connection, word: str, limit: int = 20, source_filter: SourceFilter = DEFAULT_FILTER,
+) -> list[dict]:
+    cond, params = source_filter.sql()
     rows = conn.execute(
         """SELECT wi.id, wi.source_id, wi.word, wi.lemma, wi.start_s, wi.end_s,
                   COALESCE(wi.confidence, 0) AS confidence,
@@ -259,21 +323,23 @@ def search_word(conn: sqlite3.Connection, word: str, limit: int = 20) -> list[di
                   s.license, s.licence_url, s.lang
            FROM word_instances wi
            JOIN sources s ON wi.source_id = s.id
-           WHERE wi.word = ?
+           WHERE wi.word = ? AND {cond}
            ORDER BY wi.confidence DESC
-           LIMIT ?""",
-        (word.lower().strip(), limit),
+           LIMIT ?""".format(cond=cond),
+        (word.lower().strip(), *params, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
 def next_word_instance(
-    conn: sqlite3.Connection, word_instance_id: int, max_gap: float = 0.5
+    conn: sqlite3.Connection, word_instance_id: int, max_gap: float = 0.5,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> dict | None:
     """The word instance immediately following `word_instance_id` in the same
     source recording, within `max_gap` seconds — a proxy for 'spoken as part
     of the same continuous utterance' (small negative slack allows for slight
     timestamp overlap/rounding)."""
+    cond, params = source_filter.sql()
     row = conn.execute(
         """SELECT wi2.id, wi2.source_id, wi2.word, wi2.lemma, wi2.start_s, wi2.end_s,
                   COALESCE(wi2.confidence, 0) AS confidence,
@@ -287,18 +353,20 @@ def next_word_instance(
                   AND wi2.start_s >= wi1.end_s - 0.05
                   AND wi2.start_s - wi1.end_s <= ?
            JOIN sources s ON wi2.source_id = s.id
-           WHERE wi1.id = ?
+           WHERE wi1.id = ? AND {cond}
            ORDER BY wi2.start_s ASC
-           LIMIT 1""",
-        (max_gap, word_instance_id),
+           LIMIT 1""".format(cond=cond),
+        (max_gap, word_instance_id, *params),
     ).fetchone()
     return dict(row) if row else None
 
 
 def search_word_by_pitch(
-    conn: sqlite3.Connection, word: str, target_f0: float, limit: int = 20
+    conn: sqlite3.Connection, word: str, target_f0: float, limit: int = 20,
+    source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> list[dict]:
     """Like search_word, but ordered by proximity to a target F0 (Hz) instead of confidence."""
+    cond, params = source_filter.sql()
     rows = conn.execute(
         """SELECT wi.id, wi.source_id, wi.word, wi.lemma, wi.start_s, wi.end_s,
                   COALESCE(wi.confidence, 0) AS confidence,
@@ -308,10 +376,10 @@ def search_word_by_pitch(
                   s.license, s.licence_url, s.lang
            FROM word_instances wi
            JOIN sources s ON wi.source_id = s.id
-           WHERE wi.word = ? AND wi.f0_mean IS NOT NULL
+           WHERE wi.word = ? AND wi.f0_mean IS NOT NULL AND {cond}
            ORDER BY ABS(wi.f0_mean - ?) ASC
-           LIMIT ?""",
-        (word.lower().strip(), target_f0, limit),
+           LIMIT ?""".format(cond=cond),
+        (word.lower().strip(), *params, target_f0, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -330,6 +398,15 @@ def get_word_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None
         (instance_id,),
     ).fetchone()
     return dict(row) if row else None
+
+
+def source_allowed(conn: sqlite3.Connection, word_instance_id: int, source_filter: SourceFilter) -> bool:
+    """Whether the word instance's source passes `source_filter`."""
+    cond, params = source_filter.sql()
+    return conn.execute(
+        f"SELECT 1 FROM word_instances wi JOIN sources s ON wi.source_id = s.id WHERE wi.id = ? AND {cond}",
+        (word_instance_id, *params),
+    ).fetchone() is not None
 
 
 # Sub-word unit tables. Syllables and phones share one query shape; only these
@@ -379,10 +456,13 @@ def _insert_units(conn: sqlite3.Connection, kind: str, word_instance_id: int, ro
     conn.commit()
 
 
-def _next_unit(conn: sqlite3.Connection, kind: str, unit_id: int, max_gap: float) -> dict | None:
+def _next_unit(conn: sqlite3.Connection, kind: str, unit_id: int, max_gap: float,
+               source_filter: SourceFilter) -> dict | None:
     """The unit right after `unit_id` in the same recording: the next unit of the same
     word, or the first unit of the following word (via next_word_instance). None if
-    speech does not continue or the next word has no units (not in CMUdict)."""
+    speech does not continue or the next word has no units (not in CMUdict).
+    The next unit of the same word shares its source, so only the step to the
+    next word needs `source_filter`."""
     u = _UNITS[kind]
     cur = conn.execute(
         f"SELECT word_instance_id, {u['pos']} AS pos, {u['count']} AS n FROM {u['table']} WHERE id=?",
@@ -393,16 +473,19 @@ def _next_unit(conn: sqlite3.Connection, kind: str, unit_id: int, max_gap: float
     if cur["pos"] < cur["n"] - 1:
         return _unit_one(conn, kind, f"u.word_instance_id = ? AND u.{u['pos']} = ?",
                          (cur["word_instance_id"], cur["pos"] + 1))
-    nxt_word = next_word_instance(conn, cur["word_instance_id"], max_gap=max_gap)
+    nxt_word = next_word_instance(conn, cur["word_instance_id"], max_gap=max_gap,
+                                  source_filter=source_filter)
     if nxt_word is None:
         return None
     return _unit_one(conn, kind, f"u.word_instance_id = ? AND u.{u['pos']} = 0", (nxt_word["id"],))
 
 
-def _search_units(conn: sqlite3.Connection, kind: str, phone_key: str, limit: int) -> list[dict]:
+def _search_units(conn: sqlite3.Connection, kind: str, phone_key: str, limit: int,
+                  source_filter: SourceFilter) -> list[dict]:
+    cond, params = source_filter.sql()
     rows = conn.execute(
-        f"{_unit_select(kind)} WHERE u.phone_key = ? ORDER BY wi.confidence DESC LIMIT ?",
-        (phone_key, limit),
+        f"{_unit_select(kind)} WHERE u.phone_key = ? AND {cond} ORDER BY wi.confidence DESC LIMIT ?",
+        (phone_key, *params, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -417,22 +500,26 @@ def insert_phone_instances(conn: sqlite3.Connection, word_instance_id: int, phon
     _insert_units(conn, "phone", word_instance_id, phones)
 
 
-def next_syllable_instance(conn: sqlite3.Connection, syllable_instance_id: int, max_gap: float = 0.5) -> dict | None:
-    return _next_unit(conn, "syllable", syllable_instance_id, max_gap)
+def next_syllable_instance(conn: sqlite3.Connection, syllable_instance_id: int, max_gap: float = 0.5,
+                          source_filter: SourceFilter = DEFAULT_FILTER) -> dict | None:
+    return _next_unit(conn, "syllable", syllable_instance_id, max_gap, source_filter)
 
 
-def next_phone_instance(conn: sqlite3.Connection, phone_instance_id: int, max_gap: float = 0.5) -> dict | None:
-    return _next_unit(conn, "phone", phone_instance_id, max_gap)
+def next_phone_instance(conn: sqlite3.Connection, phone_instance_id: int, max_gap: float = 0.5,
+                          source_filter: SourceFilter = DEFAULT_FILTER) -> dict | None:
+    return _next_unit(conn, "phone", phone_instance_id, max_gap, source_filter)
 
 
-def search_syllable(conn: sqlite3.Connection, phone_key: str, limit: int = 20) -> list[dict]:
+def search_syllable(conn: sqlite3.Connection, phone_key: str, limit: int = 20,
+                  source_filter: SourceFilter = DEFAULT_FILTER) -> list[dict]:
     """Candidate syllable instances for a phone_key, ordered by parent word's confidence."""
-    return _search_units(conn, "syllable", phone_key, limit)
+    return _search_units(conn, "syllable", phone_key, limit, source_filter)
 
 
-def search_phone(conn: sqlite3.Connection, phone_key: str, limit: int = 20) -> list[dict]:
+def search_phone(conn: sqlite3.Connection, phone_key: str, limit: int = 20,
+                  source_filter: SourceFilter = DEFAULT_FILTER) -> list[dict]:
     """Candidate phone instances for a phone_key, ordered by parent word's confidence."""
-    return _search_units(conn, "phone", phone_key, limit)
+    return _search_units(conn, "phone", phone_key, limit, source_filter)
 
 
 def get_syllable_instance(conn: sqlite3.Connection, instance_id: int) -> dict | None:

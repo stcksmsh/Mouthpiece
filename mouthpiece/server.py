@@ -252,7 +252,9 @@ def api_render(req: RenderRequest):
         "diction":     _clamp1(req.diction),
         "emotion":     _clamp1(req.emotion),
     }
-    matches = match.match_text(req.text, conn, rng=rng, **criteria)
+    # Server renders always use the default filter: restricted sources are left out.
+    source_filter = index.SourceFilter()
+    matches = match.match_text(req.text, conn, rng=rng, source_filter=source_filter, **criteria)
     conn.close()
 
     render = {
@@ -260,6 +262,7 @@ def api_render(req: RenderRequest):
         "text":       req.text,
         "seed":       seed,
         "criteria":   criteria,
+        "source_filter": source_filter,
         "matches":    matches,
         "words":      [],
         "wav_path":   None,
@@ -299,9 +302,12 @@ def api_swap(render_id: str, word_index: int, req: SwapRequest):
         raise HTTPException(400, "word_index out of range")
     conn = _conn()
     row = index.get_word_instance(conn, req.word_instance_id)
+    allowed = row is not None and index.source_allowed(conn, row["id"], render["source_filter"])
     conn.close()
     if row is None:
         raise HTTPException(404, f"word_instance {req.word_instance_id} not found")
+    if not allowed:
+        raise HTTPException(400, f"word_instance {req.word_instance_id} comes from a source this render's filter excludes")
     token  = render["matches"][word_index][0]
     old_w  = render["words"][word_index]
     _break_phrase(render, word_index)
@@ -363,11 +369,12 @@ def api_reroll(render_id: str, word_index: int):
     diction     = criteria.get("diction", 0.0)
     emotion     = criteria.get("emotion", 0.0)
     granularity = criteria.get("granularity", 0.0)
+    source_filter = render["source_filter"]
 
     if isinstance(current_row, list):
         # Currently stitched — re-pick per-syllable rather than flipping to whole-word.
         row = match.stitch_syllables(conn, token, rng=rng, diction=diction, emotion=emotion,
-                                      granularity=granularity)
+                                      granularity=granularity, source_filter=source_filter)
         conn.close()
         if row is None:
             raise HTTPException(400, f"Could not re-stitch syllables for '{token}'")
@@ -380,7 +387,7 @@ def api_reroll(render_id: str, word_index: int):
         phrase_len = current_row["phrase_len"]
         start_idx  = word_index - phrase_pos
         tokens_span = [render["matches"][k][0] for k in range(start_idx, start_idx + phrase_len)]
-        run = match.find_phrase(conn, tokens_span, 0, rng=rng)
+        run = match.find_phrase(conn, tokens_span, 0, rng=rng, source_filter=source_filter)
 
         if run and len(run) == phrase_len:
             pid = int(rng.integers(1, 2**31))
@@ -395,13 +402,14 @@ def api_reroll(render_id: str, word_index: int):
             for pos in range(phrase_len):
                 idx = start_idx + pos
                 tok = render["matches"][idx][0]
-                new_row = match.find_clip(conn, tok, rng=rng, diction=diction, emotion=emotion)
+                new_row = match.find_clip(conn, tok, rng=rng, diction=diction, emotion=emotion,
+                                          source_filter=source_filter)
                 _replace_match(render, idx, tok, new_row)
         conn.close()
 
     else:
         current_id = old_w.get("word_instance_id")
-        rows = index.search_word(conn, token, limit=20)
+        rows = index.search_word(conn, token, limit=20, source_filter=source_filter)
         conn.close()
         if not rows:
             raise HTTPException(400, f"No candidate clips for '{token}'")
@@ -555,7 +563,8 @@ def api_manifest(render_id: str):
     conn.close()
     return manifest.build_manifest(
         render["text"], render["manifest_words"], Path(render["wav_path"]),
-        seed=render["seed"], controls={**render["criteria"], "nth": {}},
+        seed=render["seed"],
+        controls={**render["criteria"], "nth": {}, "sources": render["source_filter"].controls()},
         corpus_hash=corpus_hash, token_state=state,
     )
 
@@ -764,9 +773,13 @@ def api_swap_syllable(render_id: str, word_index: int, syll_index: int, req: Swa
 
     conn = _conn()
     row = index.get_syllable_instance(conn, req.syllable_instance_id)
+    allowed = row is not None and index.source_allowed(conn, row["word_instance_id"], render["source_filter"])
     conn.close()
     if row is None:
         raise HTTPException(404, f"syllable_instance {req.syllable_instance_id} not found")
+    if not allowed:
+        raise HTTPException(
+            400, f"syllable_instance {req.syllable_instance_id} comes from a source this render's filter excludes")
     if row["phone_key"] != current[syll_index]["phone_key"]:
         raise HTTPException(400, "syllable_instance does not match this syllable's phone_key")
 

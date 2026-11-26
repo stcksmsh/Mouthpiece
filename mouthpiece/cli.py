@@ -73,6 +73,36 @@ def _parse_nth(nth_args: list[str]) -> dict[str, int]:
     return overrides
 
 
+def _add_source_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--tier", default="clean,unverified",
+        help="licence tiers clips may come from: a comma list of clean, unverified, "
+             "restricted, or 'all' (default: clean,unverified; a source with no tier is unverified)",
+    )
+    parser.add_argument(
+        "--only", action="append", metavar="NAME",
+        help="use only sources whose speaker label or filename contains NAME "
+             "(case-insensitive; repeatable, any one may match)",
+    )
+    parser.add_argument(
+        "--exclude", action="append", metavar="NAME",
+        help="skip sources whose speaker label or filename contains NAME "
+             "(case-insensitive; repeatable)",
+    )
+
+
+def _source_filter(args: argparse.Namespace):
+    """The SourceFilter from --tier, --only and --exclude."""
+    from . import index
+
+    tiers = index.TIERS if args.tier == "all" else tuple(t.strip() for t in args.tier.split(","))
+    try:
+        return index.SourceFilter(tiers=tiers, only=tuple(args.only or ()),
+                                  exclude=tuple(args.exclude or ()))
+    except ValueError as exc:
+        sys.exit(f"Error: {exc}")
+
+
 def cmd_render(args: argparse.Namespace) -> None:
     import numpy as np
     from . import assemble, index, manifest, match
@@ -88,6 +118,7 @@ def cmd_render(args: argparse.Namespace) -> None:
         else p["renders"] / f"render_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
     )
     nth = _parse_nth(getattr(args, "nth", None) or [])
+    source_filter = _source_filter(args)
 
     seed = args.seed if args.seed is not None else int(np.random.default_rng().integers(2**31))
     rng  = np.random.default_rng(seed)
@@ -98,6 +129,7 @@ def cmd_render(args: argparse.Namespace) -> None:
         text, conn, rng=rng, nth_overrides=nth,
         granularity=args.granularity, diction=args.diction, emotion=args.emotion,
         selector=args.selector, smooth=args.smooth, continuity=args.continuity,
+        source_filter=source_filter,
     )
     report  = match.coverage_report(matches)
 
@@ -105,9 +137,10 @@ def cmd_render(args: argparse.Namespace) -> None:
           f"({report['found_word']} whole-word, {report['found_phrase']} phrase, "
           f"{report['found_syllables']} syllable-stitched)")
     if report["missing"]:
-        print(f"Missing:  {', '.join(report['missing_tokens'])}")
+        print(f"Missing:  {', '.join(report['missing_tokens'])}  "
+              "(no clip in the selected sources; rendered as gaps)")
 
-    if report["found"] == 0:
+    if report["found"] == 0 and conn.execute("SELECT 1 FROM word_instances LIMIT 1").fetchone() is None:
         conn.close()
         sys.exit("Error: no words found in index. Run 'mouthpiece ingest' first.")
 
@@ -116,7 +149,7 @@ def cmd_render(args: argparse.Namespace) -> None:
     assemble.write_wav(audio, output)
 
     controls = {"granularity": args.granularity, "diction": args.diction,
-                "emotion": args.emotion, "nth": nth}
+                "emotion": args.emotion, "nth": nth, "sources": source_filter.controls()}
     if args.selector != "greedy":
         # Greedy manifests keep their existing controls; only viterbi has these knobs.
         controls |= {"selector": args.selector, "smooth": args.smooth,
@@ -180,10 +213,11 @@ def cmd_replay(args: argparse.Namespace) -> None:
 def cmd_candidates(args: argparse.Namespace) -> None:
     from . import index
 
+    source_filter = _source_filter(args)
     p = _paths()
     conn = index.get_connection(p["db"])
     word = args.word.lower().strip()
-    rows = index.search_word(conn, word, limit=20)
+    rows = index.search_word(conn, word, limit=20, source_filter=source_filter)
     conn.close()
 
     if not rows:
@@ -202,6 +236,7 @@ def cmd_coverage(args: argparse.Namespace) -> None:
     import numpy as np
     from . import index, match
 
+    source_filter = _source_filter(args)
     p = _paths()
     conn = index.get_connection(p["db"])
     # Phrase-search and forced-syllable branches only trigger with an rng — supply
@@ -210,6 +245,7 @@ def cmd_coverage(args: argparse.Namespace) -> None:
     matches = match.match_text(
         args.text, conn, rng=rng,
         granularity=args.granularity, diction=args.diction, emotion=args.emotion,
+        source_filter=source_filter,
     )
     conn.close()
 
@@ -553,6 +589,7 @@ def main() -> None:
         help="viterbi only: bonus for a clip that directly follows the previous one "
              "in the same recording (0 = patchwork, e.g. 1.0 = prefer runs)",
     )
+    _add_source_args(p_render)
 
     # --- replay ---
     p_replay = sub.add_parser("replay", help="Rebuild a render from its v2 manifest, without reselecting clips")
@@ -565,6 +602,7 @@ def main() -> None:
     p_cov.add_argument("--granularity", type=float, default=0.0)
     p_cov.add_argument("--diction", type=float, default=0.0)
     p_cov.add_argument("--emotion", type=float, default=0.0)
+    _add_source_args(p_cov)
 
     # --- batch-ingest ---
     p_batch = sub.add_parser("batch-ingest", help="Ingest multiple files from a CSV")
@@ -599,6 +637,7 @@ def main() -> None:
     # --- candidates ---
     p_cand = sub.add_parser("candidates", help="List all clips for a word, ranked by confidence")
     p_cand.add_argument("word", help="Word to look up")
+    _add_source_args(p_cand)
 
     # --- serve ---
     p_serve = sub.add_parser("serve", help="Start the local web UI server")

@@ -133,7 +133,8 @@ def test_manifest_tracks_swap_reroll_and_lock_and_replays(run_cli, tmp_path):
 
     m = server.api_manifest(r["id"])
     assert m["schema_version"] == 2
-    assert m["controls"] == {"granularity": 0.0, "diction": 0.0, "emotion": 0.0, "nth": {}}
+    assert m["controls"] == {"granularity": 0.0, "diction": 0.0, "emotion": 0.0, "nth": {},
+                             "sources": {"tiers": ["clean", "unverified"], "only": [], "exclude": []}}
     w0, w1, w2 = m["words"]
     assert w0["fragments"] == [{"tier": "word", "instance_id": other}]
     assert w1["fragments"] == [{"tier": "word", "instance_id": rerolled}]
