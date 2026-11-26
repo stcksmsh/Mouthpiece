@@ -3,6 +3,8 @@
 import functools
 import math
 import re
+import statistics
+from collections import defaultdict
 
 import numpy as np
 
@@ -10,7 +12,8 @@ from .index import DEFAULT_FILTER, SourceFilter
 
 TOP_K = 8           # candidate pool size for weighted random selection
 MIN_CONF = 0.35     # clips below this confidence are excluded from the pool
-BIAS_K = 3.0        # exponent sharpness for diction/emotion reweighting
+BIAS_K = 3.0        # exponent sharpness for the diction/intensity/pitch/tempo reweighting
+MIN_SOURCE_VALUES = 5  # a source needs this many values of a feature for a per-source median
 MAX_PHRASE_LEN = 6  # cap on how many words a single phrase run can span
 PHONEME_FORCE_THRESHOLD = -0.5  # granularity below this skips straight to phoneme-only
 
@@ -43,9 +46,11 @@ def _rank_normalize(rows: list[dict], key: str) -> list[float]:
 
 def _bias_weight(score: float, slider: float) -> float:
     """score in [0,1] (higher = more of the trait); slider in [-1,1].
-    slider=0 -> multiplier 1.0 always (today's unbiased behavior)."""
+    slider=0 -> multiplier 1.0 always (today's unbiased behavior); sliders
+    outside [-1,1] are clamped."""
     if not slider:
         return 1.0
+    slider = max(-1.0, min(1.0, slider))
     s = score if slider > 0 else (1.0 - score)
     s = max(1e-6, min(1.0, s))
     return s ** (abs(slider) * BIAS_K)
@@ -58,32 +63,100 @@ def candidate_pool(rows: list[dict]) -> list[dict]:
     return pool[:TOP_K]
 
 
+_NORMS: dict[str, tuple[tuple, dict]] = {}
+
+
+def source_norms(conn) -> dict[int, dict[str, float]]:
+    """Per-source medians of f0_mean (Hz, voiced only), f0_var, rms and clip
+    rate (_clip_rate), each kept only when the source has MIN_SOURCE_VALUES
+    values of it. Cached per DB file until its word rows change."""
+    path = conn.execute("PRAGMA database_list").fetchone()[2]
+    key = tuple(conn.execute("SELECT COUNT(*), MAX(id), COUNT(rms) FROM word_instances").fetchone())
+    if path and _NORMS.get(path, (None,))[0] == key:
+        return _NORMS[path][1]
+    values: dict[int, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for sid, word, start, end, f0, f0_var, rms in conn.execute(
+            "SELECT source_id, word, start_s, end_s, f0_mean, f0_var, rms FROM word_instances"):
+        v = values[sid]
+        if f0:
+            v["f0_mean"].append(f0)
+        if f0_var is not None:
+            v["f0_var"].append(f0_var)
+        if rms is not None:
+            v["rms"].append(rms)
+        rate = _clip_rate({"word": word, "start_s": start, "end_s": end})
+        if rate:
+            v["rate"].append(rate)
+    norms = {sid: {k: statistics.median(xs) for k, xs in v.items() if len(xs) >= MIN_SOURCE_VALUES}
+             for sid, v in values.items()}
+    if path:
+        _NORMS[path] = (key, norms)
+    return norms
+
+
+def _relative(row: dict, norms: dict[int, dict[str, float]] | None) -> dict:
+    """The row's features relative to its own source's medians, None where
+    either is unknown: pitch in semitones, rms in dB, f0_var and rate as ratios.
+    Sub-word rows carry their word's source as parent_source_id."""
+    med = (norms or {}).get(row.get("source_id", row.get("parent_source_id")), {})
+    f0, f0_var, rms = row.get("f0_mean"), row.get("f0_var"), row.get("rms")
+    rate = _clip_rate(row) if "rate" in med else None
+    return {
+        "pitch":  12 * math.log2(f0 / med["f0_mean"]) if f0 and "f0_mean" in med else None,
+        "f0_var": f0_var / med["f0_var"] if f0_var is not None and med.get("f0_var") else None,
+        "rms":    rms - med["rms"] if rms is not None and "rms" in med else None,
+        "rate":   rate / med["rate"] if rate else None,
+    }
+
+
 def unit_weight(
     row: dict,
     diction: float = 0.0,
-    emotion: float = 0.0,
-    emotion_score: float = 0.5,
+    intensity: float = 0.0,
+    intensity_score: float = 0.5,
+    pitch: float = 0.0,
+    pitch_score: float = 0.5,
+    tempo: float = 0.0,
+    tempo_score: float = 0.5,
 ) -> float:
     """Unnormalised selection weight of one candidate; higher is better.
-    Confidence, scaled by the diction bias (on confidence) and the emotion bias
-    (on `emotion_score`, the row's 0..1 expressiveness within its pool, see
+    Confidence, scaled by the diction bias (on confidence) and the intensity,
+    pitch and tempo biases (on the row's 0..1 scores within its pool, see
     pool_weights). Sliders at 0 leave the confidence weight unchanged."""
     conf = row["confidence"]
     dscore = conf if conf is not None else 0.5
     # Multiplication order matches the pre-split code, so rng.choice sees
-    # bit-identical probabilities.
-    return (conf or 0.5) * _bias_weight(dscore, diction) * _bias_weight(emotion_score, emotion)
+    # bit-identical probabilities; a slider at 0 multiplies by exactly 1.0.
+    return ((conf or 0.5) * _bias_weight(dscore, diction) * _bias_weight(intensity_score, intensity)
+            * _bias_weight(pitch_score, pitch) * _bias_weight(tempo_score, tempo))
 
 
-def pool_weights(pool: list[dict], diction: float = 0.0, emotion: float = 0.0) -> list[float]:
-    """unit_weight for each row of `pool`. The emotion score is relative: the
-    mean of the row's f0_var and rms percentile ranks within this pool."""
-    f0_rank  = _rank_normalize(pool, "f0_var")
-    rms_rank = _rank_normalize(pool, "rms")
+def pool_weights(
+    pool: list[dict],
+    diction: float = 0.0,
+    intensity: float = 0.0,
+    pitch: float = 0.0,
+    tempo: float = 0.0,
+    norms: dict[int, dict[str, float]] | None = None,
+) -> list[float]:
+    """unit_weight for each row of `pool`. Each score is the percentile rank,
+    within this pool, of the row's feature relative to its own source
+    (_relative, with `norms` from source_norms), so a loud or high-voiced
+    recording does not win everything. Intensity is the mean of the f0_var and
+    rms ranks, pitch ranks semitones from the source median, tempo ranks phone
+    rate against the source's. Unknown values score 0.5."""
+    rel = [_relative(r, norms) for r in pool]
+    f0_rank, rms_rank = _rank_normalize(rel, "f0_var"), _rank_normalize(rel, "rms")
+    pitch_rank, rate_rank = _rank_normalize(rel, "pitch"), _rank_normalize(rel, "rate")
     return [
-        unit_weight(r, diction, emotion, (f + m) / 2.0)
-        for r, f, m in zip(pool, f0_rank, rms_rank, strict=True)
+        unit_weight(r, diction, intensity, (f + m) / 2.0, pitch, p, tempo, t)
+        for r, f, m, p, t in zip(pool, f0_rank, rms_rank, pitch_rank, rate_rank, strict=True)
     ]
+
+
+def _norms(conn, intensity: float, pitch: float, tempo: float) -> dict | None:
+    """source_norms when a per-source bias is on; None skips the DB scan."""
+    return source_norms(conn) if intensity or pitch or tempo else None
 
 
 def _pick(
@@ -91,7 +164,10 @@ def _pick(
     rng: np.random.Generator | None,
     nth: int | None,
     diction: float = 0.0,
-    emotion: float = 0.0,
+    intensity: float = 0.0,
+    pitch: float = 0.0,
+    tempo: float = 0.0,
+    norms: dict | None = None,
 ) -> dict:
     """
     Select one row from a candidate list.
@@ -109,7 +185,7 @@ def _pick(
         return rows[0]
 
     pool = candidate_pool(rows)
-    weights = np.array(pool_weights(pool, diction, emotion), dtype=np.float64)
+    weights = np.array(pool_weights(pool, diction, intensity, pitch, tempo, norms), dtype=np.float64)
     weights /= weights.sum()
     idx = rng.choice(len(pool), p=weights)
     return pool[idx]
@@ -193,7 +269,10 @@ def _select_viterbi(
     results: list[tuple[str, dict | list[dict] | tuple[dict, ...] | None]],
     rng: np.random.Generator | None,
     diction: float,
-    emotion: float,
+    intensity: float,
+    pitch: float,
+    tempo: float,
+    norms: dict | None,
     smooth: float,
     continuity: float,
 ) -> list[tuple[str, dict | list[dict] | None]]:
@@ -210,7 +289,7 @@ def _select_viterbi(
     lattice = []
     for _, clip in results:
         if isinstance(clip, tuple):
-            w = pool_weights(list(clip), diction, emotion)
+            w = pool_weights(list(clip), diction, intensity, pitch, tempo, norms)
             total = sum(w)
             lattice.append([(-math.log(x / total) - TEMPERATURE * next(noise, 0.0), r, r)
                             for x, r in zip(w, clip, strict=True)])
@@ -342,7 +421,10 @@ def _stitch_at_unit(
     rng: np.random.Generator | None,
     nth: int | None,
     diction: float,
-    emotion: float,
+    intensity: float,
+    pitch: float,
+    tempo: float,
+    norms: dict | None,
     source_filter: SourceFilter = DEFAULT_FILTER,
 ) -> tuple[list[dict], int] | None:
     """Resolve+stitch `word` at one granularity (syllable or phone, per
@@ -375,7 +457,7 @@ def _stitch_at_unit(
         rows = search_fn(conn, key, TOP_K + 5, source_filter=source_filter)
         if not rows:
             return None
-        picks.append(_pick(rows, rng, nth, diction=diction, emotion=emotion))
+        picks.append(_pick(rows, rng, nth, diction, intensity, pitch, tempo, norms))
         i += 1
         segment_count += 1
     return picks, segment_count
@@ -387,9 +469,12 @@ def stitch_syllables(
     rng: np.random.Generator | None = None,
     nth: int | None = None,
     diction: float = 0.0,
-    emotion: float = 0.0,
+    intensity: float = 0.0,
+    pitch: float = 0.0,
+    tempo: float = 0.0,
     granularity: float = 0.0,
     source_filter: SourceFilter = DEFAULT_FILTER,
+    norms: dict | None = None,
 ) -> list[dict] | None:
     """Stitch `word` from sub-word corpus fragments, preferring natural
     multi-unit runs (_find_natural_run) — real, continuously-spoken corpus
@@ -404,13 +489,16 @@ def stitch_syllables(
     pushed past PHONEME_FORCE_THRESHOLD, in which case phoneme-level is used
     unconditionally (the explicit 'hear more fragmentation' slider extreme).
     Returns None if the word isn't in CMUdict, or neither granularity can
-    fully tile it from what's in the corpus."""
+    fully tile it from what's in the corpus. `norms` is source_norms(conn),
+    looked up here when None and a per-source bias is on."""
     from . import index
+
+    norms = norms or _norms(conn, intensity, pitch, tempo)
 
     if granularity < PHONEME_FORCE_THRESHOLD:
         forced = _stitch_at_unit(
             conn, word, index.search_phone, index.next_phone_instance,
-            rng, nth, diction, emotion, source_filter,
+            rng, nth, diction, intensity, pitch, tempo, norms, source_filter,
         )
         if forced is None:
             return None
@@ -419,11 +507,11 @@ def stitch_syllables(
 
     syll  = _stitch_at_unit(
         conn, word, index.search_syllable, index.next_syllable_instance,
-        rng, nth, diction, emotion, source_filter,
+        rng, nth, diction, intensity, pitch, tempo, norms, source_filter,
     )
     phone = _stitch_at_unit(
         conn, word, index.search_phone, index.next_phone_instance,
-        rng, nth, diction, emotion, source_filter,
+        rng, nth, diction, intensity, pitch, tempo, norms, source_filter,
     )
 
     if syll is None and phone is None:
@@ -483,17 +571,23 @@ def find_clip(
     rng: np.random.Generator | None = None,
     nth: int | None = None,
     diction: float = 0.0,
-    emotion: float = 0.0,
+    intensity: float = 0.0,
+    pitch: float = 0.0,
+    tempo: float = 0.0,
     granularity: float = 0.0,
     defer: bool = False,
     source_filter: SourceFilter = DEFAULT_FILTER,
+    norms: dict | None = None,
 ) -> dict | list[dict] | tuple[dict, ...] | None:
     """One word's clip: a row, a stitched list of sub-word rows, or None.
     With `defer`, a whole-word match returns its candidate_pool as a tuple
-    instead of a pick, for the viterbi selector to choose from."""
+    instead of a pick, for the viterbi selector to choose from. `norms` as in
+    stitch_syllables."""
+    norms = norms or _norms(conn, intensity, pitch, tempo)
+    bias = {"diction": diction, "intensity": intensity, "pitch": pitch, "tempo": tempo}
     if granularity < 0 and rng is not None and rng.random() < abs(granularity):
-        stitched = stitch_syllables(conn, word, rng, nth, diction=diction, emotion=emotion,
-                                     granularity=granularity, source_filter=source_filter)
+        stitched = stitch_syllables(conn, word, rng, nth, **bias, granularity=granularity,
+                                     source_filter=source_filter, norms=norms)
         if stitched:
             return stitched
 
@@ -501,9 +595,9 @@ def find_clip(
     if rows:
         if defer:
             return tuple(candidate_pool(rows))
-        return _pick(rows, rng, nth, diction=diction, emotion=emotion)
-    stitched = stitch_syllables(conn, word, rng, nth, diction=diction, emotion=emotion,
-                                 granularity=granularity, source_filter=source_filter)
+        return _pick(rows, rng, nth, **bias, norms=norms)
+    stitched = stitch_syllables(conn, word, rng, nth, **bias, granularity=granularity,
+                                 source_filter=source_filter, norms=norms)
     if stitched:
         print(f"    [stitch] '{word}' → {len(stitched)} unit(s)")
     return stitched
@@ -541,7 +635,9 @@ def match_text(
     nth_overrides: dict[str, int] | None = None,
     granularity: float = 0.0,
     diction: float = 0.0,
-    emotion: float = 0.0,
+    intensity: float = 0.0,
+    pitch: float = 0.0,
+    tempo: float = 0.0,
     selector: str = "greedy",
     smooth: float = 1.0,
     continuity: float = 0.0,
@@ -550,9 +646,11 @@ def match_text(
     """Pick a clip per token. `greedy` picks each word on its own; `viterbi`
     makes the same structural draws (phrase/stitch gates, sub-word picks) and
     then chooses every free whole-word clip at once (_select_viterbi). Every
-    clip comes from a source `source_filter` allows; a word with none is None."""
+    clip comes from a source `source_filter` allows; a word with none is None.
+    diction, intensity, pitch and tempo bias selection, each -1..1, 0 = none."""
     if selector not in ("greedy", "viterbi"):
         raise ValueError(f"unknown selector: {selector!r}")
+    norms = _norms(conn, intensity, pitch, tempo)
     tokens = tokenize(text)
     overrides = nth_overrides or {}
     results: list[tuple[str, dict | list[dict] | None]] = []
@@ -578,17 +676,18 @@ def match_text(
                 i += plen
                 continue
 
-        clip = find_clip(conn, token, rng=rng, nth=nth, diction=diction, emotion=emotion,
-                          granularity=granularity,
+        clip = find_clip(conn, token, rng=rng, nth=nth, diction=diction, intensity=intensity,
+                          pitch=pitch, tempo=tempo, granularity=granularity,
                           defer=selector == "viterbi" and nth is None,
-                          source_filter=source_filter)
+                          source_filter=source_filter, norms=norms)
         if nth and clip and isinstance(clip, dict):
             print(f"    [nth={nth}] '{token}' → id={clip['id']}")
         results.append((token, clip))
         i += 1
 
     if selector == "viterbi":
-        return _select_viterbi(results, rng, diction, emotion, smooth, continuity)
+        return _select_viterbi(results, rng, diction, intensity, pitch, tempo, norms,
+                               smooth, continuity)
     return results
 
 

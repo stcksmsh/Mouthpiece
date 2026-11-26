@@ -439,7 +439,8 @@ def _unit_select(kind: str) -> str:
     u = _UNITS[kind]
     cols = ", ".join(f"u.{c}" for c in u["cols"])
     return f"""SELECT u.id, u.word_instance_id, {cols},
-                      wi.word AS parent_word, COALESCE(wi.confidence, 0) AS confidence,
+                      wi.word AS parent_word, wi.source_id AS parent_source_id,
+                      COALESCE(wi.confidence, 0) AS confidence,
                       wi.f0_mean, wi.f0_var, wi.rms, wi.spectral_tilt,
                       s.filename, s.date, s.source_url,
                       s.speaker, s.author, s.reader, s.uploader, s.source_label,

@@ -30,14 +30,14 @@ def test_golden_manifests_unchanged(run_cli, tmp_path, path):
     assert _sequence(m) == golden["words"]
 
 
-def _row(conf, f0_var=None, rms=None, id=0):
-    return {"id": id, "confidence": conf, "f0_var": f0_var, "rms": rms}
+def _row(conf, f0_var=None, rms=None, id=0, source_id=None):
+    return {"id": id, "confidence": conf, "f0_var": f0_var, "rms": rms, "source_id": source_id}
 
 
 @pytest.mark.parametrize("conf", [0.9, 0.4, None])
 def test_zero_sliders_give_the_confidence_weight(conf):
     assert match.unit_weight(_row(conf)) == (conf or 0.5)
-    assert match.unit_weight(_row(conf), 0.0, 0.0, emotion_score=0.9) == (conf or 0.5)
+    assert match.unit_weight(_row(conf), 0.0, 0.0, intensity_score=0.9) == (conf or 0.5)
 
 
 def test_diction_moves_weight_towards_clear_or_mumbled_clips():
@@ -57,30 +57,31 @@ def test_emotion_moves_weight_towards_expressive_or_flat_clips():
     row = _row(0.8)
 
     def ratio(emotion):
-        lively = match.unit_weight(row, emotion=emotion, emotion_score=0.9)
-        flat = match.unit_weight(row, emotion=emotion, emotion_score=0.1)
+        lively = match.unit_weight(row, intensity=emotion, intensity_score=0.9)
+        flat = match.unit_weight(row, intensity=emotion, intensity_score=0.1)
         return lively / flat
 
     assert ratio(0.0) == 1.0
     assert ratio(1.0) > ratio(0.5) > 1.0
     assert ratio(-1.0) < ratio(-0.5) < 1.0
-    assert match.unit_weight(row, emotion=1.0, emotion_score=1.0) == match.unit_weight(row)
-    assert match.unit_weight(row, emotion=-1.0, emotion_score=0.0) == match.unit_weight(row)
-    assert match.unit_weight(row, emotion=-1.0, emotion_score=1.0) < match.unit_weight(row)
+    assert match.unit_weight(row, intensity=1.0, intensity_score=1.0) == match.unit_weight(row)
+    assert match.unit_weight(row, intensity=-1.0, intensity_score=0.0) == match.unit_weight(row)
+    assert match.unit_weight(row, intensity=-1.0, intensity_score=1.0) < match.unit_weight(row)
 
 
 def test_pool_weights_rank_emotion_within_the_pool():
-    flat = _row(0.8, f0_var=1.0, rms=0.01, id=1)
-    lively = _row(0.8, f0_var=50.0, rms=0.20, id=2)
-    up = match.pool_weights([flat, lively], emotion=1.0)
-    down = match.pool_weights([flat, lively], emotion=-1.0)
+    flat = _row(0.8, f0_var=1.0, rms=0.01, id=1, source_id=1)
+    lively = _row(0.8, f0_var=50.0, rms=0.20, id=2, source_id=1)
+    norms = {1: {"f0_var": 10.0, "rms": 0.1}}
+    up = match.pool_weights([flat, lively], intensity=1.0, norms=norms)
+    down = match.pool_weights([flat, lively], intensity=-1.0, norms=norms)
     assert up[1] > up[0]
     assert down[0] > down[1]
     assert match.pool_weights([flat, lively]) == [0.8, 0.8]
 
 
 def test_pool_weights_single_and_empty():
-    assert match.pool_weights([_row(0.7)], diction=1.0, emotion=1.0) == [
+    assert match.pool_weights([_row(0.7)], diction=1.0, intensity=1.0) == [
         match.unit_weight(_row(0.7), 1.0, 1.0, 0.5)]
     assert match.pool_weights([]) == []
 

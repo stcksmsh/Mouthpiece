@@ -12,7 +12,7 @@ import soundfile as sf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 from . import assemble, index, manifest, match, phonemes, reference
 
@@ -186,13 +186,18 @@ def _clip_bytes(row: dict) -> bytes:
     return buf.read()
 
 
+BIAS_CONTROLS = ("diction", "intensity", "pitch", "tempo")
+
+
 def _render_response(render: dict) -> dict:
+    criteria = render.get("criteria", dict.fromkeys(("granularity", *BIAS_CONTROLS), 0.0))
     return {
         "id":         render["id"],
         "seed":       render["seed"],
         "duration_s": render["duration_s"],
         "words":      render["words"],
-        "criteria":   render.get("criteria", {"granularity": 0.0, "diction": 0.0, "emotion": 0.0}),
+        # The UI's slider still reads `emotion`, the old name of intensity.
+        "criteria":   {**criteria, "emotion": criteria["intensity"]},
     }
 
 # ---------------------------------------------------------------------------
@@ -204,7 +209,10 @@ class RenderRequest(BaseModel):
     seed: int | None = None
     granularity: float = 0.0  # -1 (syllable-per-syllable) .. 0 .. +1 (long uniform phrases)
     diction: float = 0.0      # -1 (mumbled) .. 0 .. +1 (crisp)
-    emotion: float = 0.0      # -1 (flat) .. 0 .. +1 (expressive)
+    # -1 (calm) .. 0 .. +1 (intense); `emotion` is its old name and still accepted.
+    intensity: float = Field(0.0, validation_alias=AliasChoices("intensity", "emotion"))
+    pitch: float = 0.0        # -1 (low for the speaker) .. 0 .. +1 (high)
+    tempo: float = 0.0        # -1 (slow for the speaker) .. 0 .. +1 (fast)
 
 class SwapRequest(BaseModel):
     word_instance_id: int
@@ -247,11 +255,7 @@ def api_render(req: RenderRequest):
     conn = _conn()
     seed = req.seed if req.seed is not None else int(np.random.default_rng().integers(2**31))
     rng  = np.random.default_rng(seed)
-    criteria = {
-        "granularity": _clamp1(req.granularity),
-        "diction":     _clamp1(req.diction),
-        "emotion":     _clamp1(req.emotion),
-    }
+    criteria = {k: _clamp1(getattr(req, k)) for k in ("granularity", *BIAS_CONTROLS)}
     # Server renders always use the default filter: restricted sources are left out.
     source_filter = index.SourceFilter()
     matches = match.match_text(req.text, conn, rng=rng, source_filter=source_filter, **criteria)
@@ -366,14 +370,13 @@ def api_reroll(render_id: str, word_index: int):
     rng         = np.random.default_rng([render["seed"], word_index, count])
     conn        = _conn()
     criteria    = render.get("criteria", {})
-    diction     = criteria.get("diction", 0.0)
-    emotion     = criteria.get("emotion", 0.0)
+    bias        = {k: criteria.get(k, 0.0) for k in BIAS_CONTROLS}
     granularity = criteria.get("granularity", 0.0)
     source_filter = render["source_filter"]
 
     if isinstance(current_row, list):
         # Currently stitched — re-pick per-syllable rather than flipping to whole-word.
-        row = match.stitch_syllables(conn, token, rng=rng, diction=diction, emotion=emotion,
+        row = match.stitch_syllables(conn, token, rng=rng, **bias,
                                       granularity=granularity, source_filter=source_filter)
         conn.close()
         if row is None:
@@ -402,30 +405,19 @@ def api_reroll(render_id: str, word_index: int):
             for pos in range(phrase_len):
                 idx = start_idx + pos
                 tok = render["matches"][idx][0]
-                new_row = match.find_clip(conn, tok, rng=rng, diction=diction, emotion=emotion,
-                                          source_filter=source_filter)
+                new_row = match.find_clip(conn, tok, rng=rng, **bias, source_filter=source_filter)
                 _replace_match(render, idx, tok, new_row)
         conn.close()
 
     else:
         current_id = old_w.get("word_instance_id")
         rows = index.search_word(conn, token, limit=20, source_filter=source_filter)
+        norms = match._norms(conn, bias["intensity"], bias["pitch"], bias["tempo"])
         conn.close()
         if not rows:
             raise HTTPException(400, f"No candidate clips for '{token}'")
         alts = [r for r in rows if r["id"] != current_id] or rows
-        weights = np.array([(r["confidence"] or 0.5) for r in alts], dtype=np.float64)
-        if diction:
-            weights = weights * np.array(
-                [match._bias_weight(r["confidence"] if r.get("confidence") is not None else 0.5, diction)
-                 for r in alts]
-            )
-        if emotion:
-            f0_rank  = match._rank_normalize(alts, "f0_var")
-            rms_rank = match._rank_normalize(alts, "rms")
-            weights = weights * np.array(
-                [match._bias_weight((f + r) / 2.0, emotion) for f, r in zip(f0_rank, rms_rank, strict=True)]
-            )
+        weights = np.array(match.pool_weights(alts, **bias, norms=norms), dtype=np.float64)
         weights /= weights.sum()
         row = alts[int(rng.choice(len(alts), p=weights))]
         _replace_match(render, word_index, token, row)

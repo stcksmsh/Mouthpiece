@@ -54,7 +54,10 @@ def test_cli_manifest_has_every_v2_field(run_cli, tmp_path, text, extra):
     assert m["controls"] == {
         "granularity": _option(extra, "--granularity", 0.0),
         "diction":     _option(extra, "--diction", 0.0),
-        "emotion":     _option(extra, "--emotion", 0.0),
+        # --emotion is the old name of --intensity.
+        "intensity":   _option(extra, "--emotion", 0.0),
+        "pitch":       0.0,
+        "tempo":       0.0,
         "nth":         nth,
         "sources":     {"tiers": ["clean", "unverified"], "only": [], "exclude": [], "langs": ["en"]},
     }
@@ -78,6 +81,27 @@ def test_cli_manifest_has_every_v2_field(run_cli, tmp_path, text, extra):
         for f in w["fragments"]:
             assert f["tier"] in {"phrase", "word", "syllable", "phone"}
             assert isinstance(f["instance_id"], int)
+
+
+def _biases(m: dict) -> dict:
+    return {k: m["controls"][k] for k in ("diction", "intensity", "pitch", "tempo")}
+
+
+def test_cli_bias_flags_reach_selection_and_manifest(run_cli, tmp_path):
+    text = "to the to the to the"
+    m = _render(run_cli, tmp_path / "a.wav", text, "--seed", "1",
+                "--intensity", "0.5", "--pitch", "-1", "--tempo", "0.25")
+    assert _biases(m) == {"diction": 0.0, "intensity": 0.5, "pitch": -1.0, "tempo": 0.25}
+    assert "emotion" not in m["controls"]
+
+    m = _render(run_cli, tmp_path / "b.wav", text, "--seed", "1", "--emotion", "-0.75")
+    assert _biases(m) == {"diction": 0.0, "intensity": -0.75, "pitch": 0.0, "tempo": 0.0}
+
+    # Each control changes which clips are picked for the same seed.
+    for flag in ("--intensity", "--pitch", "--tempo"):
+        low = _render(run_cli, tmp_path / "lo.wav", text, "--seed", "1", flag, "-1")
+        high = _render(run_cli, tmp_path / "hi.wav", text, "--seed", "1", flag, "1")
+        assert _fragments(low) != _fragments(high), flag
 
 
 def test_cases_cover_every_tier_and_a_gap(run_cli, tmp_path):

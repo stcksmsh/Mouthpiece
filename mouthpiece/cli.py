@@ -36,6 +36,25 @@ def _paths() -> dict[str, Path]:
 # subcommand handlers
 # ---------------------------------------------------------------------------
 
+BIAS_CONTROLS = ("diction", "intensity", "pitch", "tempo")
+
+
+def _add_bias_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--diction", type=float, default=0.0,
+                   help="-1 (mumbled) .. 0 (default) .. +1 (crisp)")
+    p.add_argument("--intensity", "--emotion", type=float, default=0.0,
+                   help="-1 (calm) .. 0 (default) .. +1 (intense), loudness and pitch movement "
+                        "relative to each source; --emotion is its old name")
+    p.add_argument("--pitch", type=float, default=0.0,
+                   help="-1 (low) .. 0 (default) .. +1 (high), relative to each source's usual pitch")
+    p.add_argument("--tempo", type=float, default=0.0,
+                   help="-1 (slow) .. 0 (default) .. +1 (fast), relative to each source's usual rate")
+
+
+def _bias(args: argparse.Namespace) -> dict[str, float]:
+    return {k: getattr(args, k) for k in BIAS_CONTROLS}
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
     from . import index, ingest
 
@@ -133,7 +152,7 @@ def cmd_render(args: argparse.Namespace) -> None:
     print(f"Matching: {text!r}")
     matches = match.match_text(
         text, conn, rng=rng, nth_overrides=nth,
-        granularity=args.granularity, diction=args.diction, emotion=args.emotion,
+        granularity=args.granularity, **_bias(args),
         selector=args.selector, smooth=args.smooth, continuity=args.continuity,
         source_filter=source_filter,
     )
@@ -154,8 +173,8 @@ def cmd_render(args: argparse.Namespace) -> None:
     audio, words = assemble.assemble(matches, p["corpus"])
     assemble.write_wav(audio, output)
 
-    controls = {"granularity": args.granularity, "diction": args.diction,
-                "emotion": args.emotion, "nth": nth, "sources": source_filter.controls()}
+    controls = {"granularity": args.granularity, **_bias(args),
+                "nth": nth, "sources": source_filter.controls()}
     if args.selector != "greedy":
         # Greedy manifests keep their existing controls; only viterbi has these knobs.
         controls |= {"selector": args.selector, "smooth": args.smooth,
@@ -247,10 +266,9 @@ def cmd_coverage(args: argparse.Namespace) -> None:
     conn = index.get_connection(p["db"])
     # Phrase-search and forced-syllable branches only trigger with an rng — supply
     # one whenever a slider is actually in use, else stay deterministic (unchanged).
-    rng = np.random.default_rng() if (args.granularity or args.diction or args.emotion) else None
+    rng = np.random.default_rng() if (args.granularity or any(_bias(args).values())) else None
     matches = match.match_text(
-        args.text, conn, rng=rng,
-        granularity=args.granularity, diction=args.diction, emotion=args.emotion,
+        args.text, conn, rng=rng, granularity=args.granularity, **_bias(args),
         source_filter=source_filter,
     )
     conn.close()
@@ -573,14 +591,7 @@ def main() -> None:
         "--granularity", type=float, default=0.0,
         help="-1 (syllable-per-syllable) .. 0 (default) .. +1 (long uniform phrases)",
     )
-    p_render.add_argument(
-        "--diction", type=float, default=0.0,
-        help="-1 (mumbled) .. 0 (default) .. +1 (crisp)",
-    )
-    p_render.add_argument(
-        "--emotion", type=float, default=0.0,
-        help="-1 (flat) .. 0 (default) .. +1 (expressive)",
-    )
+    _add_bias_args(p_render)
     p_render.add_argument(
         "--selector", choices=("greedy", "viterbi"), default="greedy",
         help="greedy: pick each word on its own; viterbi: pick the whole sentence "
@@ -606,8 +617,7 @@ def main() -> None:
     p_cov = sub.add_parser("coverage", help="Check word coverage without rendering")
     p_cov.add_argument("text", help="Text to check")
     p_cov.add_argument("--granularity", type=float, default=0.0)
-    p_cov.add_argument("--diction", type=float, default=0.0)
-    p_cov.add_argument("--emotion", type=float, default=0.0)
+    _add_bias_args(p_cov)
     _add_source_args(p_cov)
 
     # --- batch-ingest ---
