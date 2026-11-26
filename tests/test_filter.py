@@ -13,7 +13,8 @@ from mouthpiece import index, ingest, match, phonemes, server
 OBAMA = "obama_20170114_0-8s.wav"
 CHURCHILL = "churchill_copy.wav"
 TEXT = "i traveled to chicago to deliver my final farewell address to the nation"
-DEFAULT_CONTROLS = {"tiers": ["clean", "unverified"], "only": [], "exclude": []}
+DEFAULT_CONTROLS = {"tiers": ["clean", "unverified"], "only": [], "exclude": [],
+                    "langs": ["en"]}
 
 
 @pytest.fixture(scope="module")
@@ -162,6 +163,7 @@ def test_manifest_records_filter(mixed, tmp_path):
         "tiers": ["clean", "unverified", "restricted"],
         "only": ["Obama", "churchill"],
         "exclude": ["copy"],
+        "langs": ["en"],
     }
 
 
@@ -303,3 +305,102 @@ def test_ingest_stores_and_validates_tier(tmp_path, monkeypatch):
                                  corpus_dir=tmp_path / "corpus")
     assert conn.execute("SELECT tier FROM sources WHERE filename='talk.wav'").fetchone()["tier"] == "restricted"
     conn.close()
+
+
+FRENCH = "french_copy.wav"
+ALL_LANGS = index.SourceFilter(langs=None)
+
+
+@pytest.fixture(scope="module")
+def french_env(corpus_env):
+    """The fixture corpus (its source has no lang, so it counts as en) plus a more
+    confident copy of it marked lang='fr', so an unfiltered render prefers the French clips."""
+    with scratch_dir("pytest-french-") as root:
+        corpus = root / "corpus"
+        shutil.copytree(corpus_env["MOUTHPIECE_CORPUS"], corpus)
+        shutil.copy(corpus / OBAMA, corpus / FRENCH)
+        db = root / "db" / "mouthpiece.db"
+        db.parent.mkdir()
+        src, dst = sqlite3.connect(corpus_env["MOUTHPIECE_DB"]), sqlite3.connect(db)
+        src.backup(dst)
+        src.close()
+        dst.close()
+
+        words = [{**w, "confidence": min(w["confidence"] + 0.01, 1.0)} for w in fixture_data()["words"]]
+        conn = index.get_connection(db)
+        sid = index.insert_source(conn, FRENCH, speaker="Livre", lang="fr")
+        index.insert_word_instances(conn, sid, words)
+        index_units(conn, sid)
+        conn.close()
+
+        yield {**corpus_env, "MOUTHPIECE_DB": str(db), "MOUTHPIECE_CORPUS": str(corpus)}
+
+
+@pytest.fixture
+def french(french_env, monkeypatch, capsys):
+    return _cli_runner(french_env, monkeypatch, capsys), french_env
+
+
+def test_default_never_picks_french(french):
+    _, env = french
+    conn = index.get_connection(Path(env["MOUTHPIECE_DB"]))
+    assert _files(index.search_word(conn, "deliver", source_filter=index.DEFAULT_FILTER)) == {OBAMA}
+    assert _files(index.search_word(conn, "deliver", source_filter=ALL_LANGS)) == {OBAMA, FRENCH}
+    conn.close()
+
+
+def test_french_render_default_and_all(french, tmp_path):
+    run, env = french
+    m, _ = _render(run, tmp_path, TEXT, "--seed", "1")
+    assert {f for _, f in _fragments(env, m)} == {OBAMA}
+    assert m["controls"]["sources"]["langs"] == ["en"]
+
+    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", "--lang", "all")
+    assert FRENCH in {f for _, f in _fragments(env, m)}
+    assert m["controls"]["sources"]["langs"] is None
+
+    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", "--lang", "fr")
+    assert {f for _, f in _fragments(env, m)} == {FRENCH}
+    assert m["controls"]["sources"]["langs"] == ["fr"]
+
+
+def test_null_lang_counts_as_english(french):
+    _, env = french
+    conn = index.get_connection(Path(env["MOUTHPIECE_DB"]))
+    assert conn.execute("SELECT lang FROM sources WHERE filename=?", (OBAMA,)).fetchone()[0] is None
+    assert OBAMA in _files(index.search_word(conn, "deliver", source_filter=index.DEFAULT_FILTER))
+    conn.close()
+
+
+def test_replay_without_langs_applies_no_language_filter(french, tmp_path):
+    run, env = french
+    m, _ = _render(run, tmp_path, TEXT, "--seed", "1", "--lang", "all")
+    assert FRENCH in {f for _, f in _fragments(env, m)}
+    del m["controls"]["sources"]["langs"]
+    old = tmp_path / "old.manifest.json"
+    old.write_text(json.dumps(m))
+    code, out = run("replay", str(old), "-o", str(tmp_path / "p.wav"))
+    assert code == 0, out
+    replayed = json.loads((tmp_path / "p.manifest.json").read_text())
+    assert _fragments(env, replayed) == _fragments(env, m)
+    assert "langs" not in replayed["controls"]["sources"]
+
+
+def test_server_swap_refuses_french_source(french, monkeypatch):
+    _, env = french
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    conn = index.get_connection(Path(env["MOUTHPIECE_DB"]))
+    r = server.api_render(server.RenderRequest(text="deliver address", seed=1))
+    fr = next(x for x in index.search_word(conn, "deliver", source_filter=ALL_LANGS) if x["filename"] == FRENCH)
+    with pytest.raises(server.HTTPException) as exc:
+        server.api_swap(r["id"], 0, server.SwapRequest(word_instance_id=fr["id"]))
+    assert exc.value.status_code == 400 and "excludes" in exc.value.detail
+    conn.close()
+
+
+def test_bad_lang_exits_with_message(french, tmp_path):
+    run, _ = french
+    code, out = run("render", "deliver", "-o", str(tmp_path / "x.wav"), "--lang", "")
+    assert code != 0
+    assert "Error:" in out
